@@ -41,7 +41,7 @@ st.set_page_config(
     page_title="MindGuard - Suicidal Ideation Detector",
     page_icon="🧠",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="auto",
 )
 
 # Module-level set — tracks which emails already accepted terms this server session.
@@ -479,6 +479,203 @@ input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:foc
 </style>
 """, unsafe_allow_html=True)
 
+# 3b. MindGuard UI overhaul CSS — injected only inside main_app() (post-auth)
+MG_UI_CSS = """
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');
+
+/* Hide default Streamlit collapse control so the sidebar feels pinned */
+[data-testid="stSidebarCollapsedControl"] { display: none !important; }
+[data-testid="collapsedControl"] { display: none !important; }
+
+/* Override stApp background + font for authenticated app */
+.stApp { background: #f7f9fb !important; font-family: 'DM Sans', 'Inter', system-ui, sans-serif !important; }
+
+/* ── Dark sidebar — pinned, always visible ────────────────────── */
+[data-testid="stSidebar"] {
+    background: #080d12 !important;
+    border-right: 1px solid #161d26 !important;
+    min-width: 220px !important;
+    max-width: 220px !important;
+    width: 220px !important;
+    padding: 0 !important;
+}
+[data-testid="stSidebar"] > div:first-child { padding: 0 !important; }
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 0 !important; }
+[data-testid="stSidebar"] * {
+    color: #6b7280 !important;
+    font-family: 'DM Sans', system-ui, sans-serif !important;
+}
+
+/* Sidebar nav buttons (Streamlit st.button overrides for sidebar) */
+[data-testid="stSidebar"] .stButton { margin: 0 !important; padding: 0 !important; }
+[data-testid="stSidebar"] .stButton > button {
+    background: transparent !important;
+    border: none !important;
+    border-radius: 7px !important;
+    padding: 7px 12px !important;
+    margin: 1px 6px !important;
+    width: calc(100% - 12px) !important;
+    text-align: left !important;
+    font-size: 0.76rem !important;
+    font-weight: 500 !important;
+    color: #6b7280 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 9px !important;
+    transition: background 0.15s, color 0.15s !important;
+    box-shadow: none !important;
+    height: auto !important;
+    min-height: 0 !important;
+    line-height: 1.4 !important;
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+    background: #0e1520 !important;
+    color: #d1d5db !important;
+    transform: none !important;
+}
+[data-testid="stSidebar"] .stButton > button * { color: inherit !important; }
+[data-testid="stSidebar"] .stButton > button p { color: inherit !important; margin: 0 !important; font-size: 0.76rem !important; }
+
+/* Sidebar brand block */
+.mg-sb-brand {
+    display: flex; align-items: center; gap: 9px;
+    padding: 15px 14px 12px; border-bottom: 1px solid #161d26;
+}
+.mg-sb-logo {
+    width: 30px; height: 30px; border-radius: 8px;
+    background: linear-gradient(135deg, #0F766E, #1D9E75);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff !important; font-weight: 800; font-size: 0.7rem; flex-shrink: 0;
+}
+.mg-sb-name { color: #f3f4f6 !important; font-size: 0.88rem; font-weight: 700; letter-spacing: -0.02em; }
+.mg-sb-section { color: #4b5563 !important; font-size: 0.58rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; padding: 12px 14px 5px; }
+.mg-sb-active {
+    display: flex; align-items: center; gap: 9px;
+    padding: 8px 12px 8px 10px; margin: 1px 6px;
+    border-radius: 7px; font-size: 0.76rem;
+    background: #0f2724; color: #e2f4f1 !important;
+    font-weight: 600; border-left: 2px solid #1D9E75;
+}
+.mg-sb-active i { color: #34d399 !important; font-size: 15px; }
+.mg-sb-footer {
+    padding: 11px 14px; border-top: 1px solid #161d26;
+    display: flex; align-items: center; gap: 9px;
+    margin-top: 12px;
+}
+.mg-sb-avatar {
+    width: 30px; height: 30px; border-radius: 50%;
+    background: linear-gradient(135deg, #0F766E, #1D9E75);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff !important; font-weight: 700; font-size: 0.72rem; flex-shrink: 0;
+}
+.mg-sb-uname { color: #f3f4f6 !important; font-size: 0.76rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mg-sb-uemail { color: #4b5563 !important; font-size: 0.64rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mg-sb-pill {
+    background: rgba(15,118,110,0.15); color: #34d399 !important;
+    border: 1px solid rgba(52,211,153,0.18); border-radius: 999px;
+    padding: 2px 7px; font-size: 0.58rem; font-weight: 700;
+    text-transform: uppercase; flex-shrink: 0;
+}
+
+/* ── Topbar ─────────────────────────────────────────────────────── */
+.mg-topbar {
+    height: 46px; background: rgba(255,255,255,0.97);
+    border-bottom: 0.5px solid rgba(229,231,235,0.8);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 20px; position: sticky; top: 0; z-index: 100;
+    margin: 0 -0.9rem 14px;
+}
+.mg-topbar-title { font-size: 0.84rem; font-weight: 600; color: #1f2937; }
+.mg-topbar-right { display: flex; align-items: center; gap: 12px; }
+.mg-topbar-bell { position: relative; color: #6b7280; cursor: pointer; line-height: 1; }
+.mg-topbar-bell i { font-size: 18px; }
+.mg-bell-dot { position: absolute; top: -2px; right: -2px; width: 7px; height: 7px; background: #ef4444; border-radius: 50%; border: 1.5px solid #fff; }
+.mg-topbar-av {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: linear-gradient(135deg, #0F766E, #1D9E75);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff !important; font-weight: 700; font-size: 0.65rem; cursor: pointer;
+}
+
+/* ── Panel cards (main content) ─────────────────────────────────── */
+.mg-panel {
+    background: #ffffff; border-radius: 12px;
+    border: 0.5px solid rgba(229,231,235,0.8);
+    padding: 16px 18px;
+    box-shadow: 0 1px 4px rgba(15,23,42,0.04);
+}
+.mg-panel-title {
+    font-size: 0.78rem; font-weight: 700; color: #1f2937;
+    margin-bottom: 10px; padding-bottom: 8px;
+    border-bottom: 1px solid #f1f5f9;
+    display: flex; align-items: center; gap: 6px;
+}
+.mg-panel-title i { font-size: 15px; color: #0F766E; }
+
+/* Risk gauge stats row */
+.mg-risk-row { display: flex; gap: 8px; margin-top: 10px; }
+.mg-risk-stat {
+    flex: 1; background: #fafbfc; border-radius: 8px;
+    border: 0.5px solid #f1f5f9; padding: 7px 8px; text-align: center;
+}
+.mg-risk-val { font-size: 0.85rem; font-weight: 700; color: #0F766E; }
+.mg-risk-lbl { font-size: 0.58rem; color: #9ca3af; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin-top: 1px; }
+
+/* Alert / safe boxes */
+.mg-alert-box {
+    margin-top: 8px; background: #fef2f2;
+    border: 0.5px solid #fecaca; border-radius: 7px;
+    padding: 7px 10px; font-size: 0.7rem; color: #991b1b;
+    font-weight: 600; display: flex; align-items: center; gap: 6px;
+}
+.mg-alert-box i { font-size: 14px; }
+.mg-safe-box {
+    margin-top: 8px; background: #f0fdf4;
+    border: 0.5px solid #bbf7d0; border-radius: 7px;
+    padding: 7px 10px; font-size: 0.7rem; color: #166534;
+    font-weight: 600; display: flex; align-items: center; gap: 6px;
+}
+.mg-safe-box i { font-size: 14px; }
+
+/* Session analytics stat cards */
+.mg-stat-row { display: grid; grid-template-columns: repeat(3,1fr); gap: 6px; margin-bottom: 10px; }
+.mg-stat-card {
+    background: #fff; border: 0.5px solid #f1f5f9;
+    border-top: 2px solid #0F766E; border-radius: 8px;
+    padding: 8px 6px; text-align: center;
+}
+.mg-stat-num { font-size: 1.3rem; font-weight: 800; color: #0F766E; letter-spacing: -0.02em; }
+.mg-stat-lbl { font-size: 0.55rem; color: #9ca3af; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 2px; }
+
+/* History rows */
+.mg-history-row { display: flex; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 0.5px solid #f9fafb; }
+.mg-h-cls { font-size: 0.65rem; font-weight: 700; min-width: 80px; }
+.mg-h-cls.risk { color: #dc2626; }
+.mg-h-cls.safe { color: #0F6E56; }
+.mg-h-ts { font-size: 0.6rem; color: #9ca3af; min-width: 38px; }
+.mg-h-txt { font-size: 0.62rem; color: #6b7280; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+
+/* Mode toggle */
+.mg-mode-wrap { display: flex; gap: 6px; margin-bottom: 10px; }
+.mg-mode-btn {
+    flex: 1; padding: 5px 0; border-radius: 7px;
+    border: 0.5px solid #e5e7eb; background: #fafbfc;
+    font-size: 0.7rem; font-weight: 600; color: #6b7280;
+    text-align: center; cursor: pointer;
+}
+.mg-mode-btn.active { background: #0F766E; color: #fff !important; border-color: #0F766E; }
+
+/* Platform strip cards (when in platform-detail sub-tabs) */
+.mg-strip { background: #fff; border-radius: 12px; border: 0.5px solid rgba(229,231,235,0.7); overflow: hidden; }
+.mg-strip-tabs { display: flex; background: #f8fafc; border-bottom: 0.5px solid #f1f5f9; padding: 0 14px; overflow-x: auto; }
+.mg-strip-tab { padding: 10px 14px; font-size: 0.7rem; font-weight: 500; color: #94a3b8; white-space: nowrap; border-bottom: 2px solid transparent; cursor: pointer; }
+.mg-strip-tab.active { color: #0F766E !important; border-bottom-color: #0F766E; font-weight: 600; }
+</style>
+"""
+
 # 4. Session state defaults (all keys initialized here)
 _defaults = {
     # Analytics
@@ -523,6 +720,8 @@ _defaults = {
     "auth_role_type":           "counselor",  # "student", "counselor", "admin"
     "notifications_unread":     0,
     "referral_code":            "",
+    # Sidebar navigation
+    "mg_page":                  "dashboard",
 }
 for _k, _v in _defaults.items():
     if _k not in st.session_state:
@@ -1684,6 +1883,10 @@ def scrape_twitter_public(profile_url: str, months: int = 3) -> list:
 # 8. main_app()
 
 def main_app() -> None:
+    # Inject the MindGuard UI overhaul CSS + Tabler icons CDN here so that
+    # pre-auth screens (sign-in, terms) keep their original light styling.
+    st.markdown(MG_UI_CSS, unsafe_allow_html=True)
+
     # Update last activity for session timeout tracking
     st.session_state.last_activity = datetime.datetime.now().isoformat()
 
@@ -1693,41 +1896,114 @@ def main_app() -> None:
         if _u:
             st.session_state.referral_code = _u.get("referral_code", "")
 
-    # Load unread notification count
+    # Load unread notifications
     _unread_list = []
     if notifications_store is not None:
         _unread_list = notifications_store.get_unread_for_user(st.session_state.auth_user)
     st.session_state.notifications_unread = len(_unread_list)
+    _unread_count = st.session_state.notifications_unread
 
-    # Sidebar — user info, notifications, referral, admin
+    # Identity bits
+    _name = st.session_state.get("auth_name") or st.session_state.get("auth_user", "User")
+    _email = st.session_state.get("auth_user", "")
+    _role_type = st.session_state.get("auth_role_type", "counselor")
+    _initials = "".join(p[0].upper() for p in _name.split()[:2]) if _name else "MG"
+
+    # ── SIDEBAR (dark, primary navigation) ────────────────────────────
     with st.sidebar:
-        # ── User info ────────────────────────────────────────────────
-        _role_type = st.session_state.get("auth_role_type", "counselor")
-        _role_colors = {
-            "student":   ("🎓", "#dbeafe", "#1e40af"),
-            "counselor": ("🩺", "#d1fae5", "#065f46"),
-            "admin":     ("🔑", "#fef3c7", "#92400e"),
-        }
-        _role_icon, _role_bg, _role_fg = _role_colors.get(_role_type, ("👤", "#f3f4f6", "#374151"))
+        # Brand
         st.markdown(
-            f'<div style="background:{_role_bg};border-radius:8px;padding:0.6rem 0.75rem;margin-bottom:0.5rem">'
-            f'<div style="font-size:0.7rem;font-weight:700;color:{_role_fg};text-transform:uppercase;letter-spacing:0.05em">'
-            f'{_role_icon} {_role_type.capitalize()}</div>'
-            f'<div style="font-size:0.78rem;color:#111827;font-weight:600;margin-top:2px;word-break:break-all">'
-            f'{st.session_state.get("auth_user","")}</div>'
+            '<div class="mg-sb-brand">'
+            '<div class="mg-sb-logo">MG</div>'
+            '<div class="mg-sb-name">MindGuard</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        # Role section label
+        st.markdown(
+            f'<div class="mg-sb-section">{_role_type.capitalize()}</div>',
+            unsafe_allow_html=True,
+        )
+
+        _pages = [
+            ("dashboard",   "ti-brain",          "Dashboard"),
+            ("reddit",      "ti-brand-reddit",   "Reddit"),
+            ("video",       "ti-video",          "Video"),
+            ("bluesky",     "ti-butterfly",      "Bluesky"),
+            ("mastodon",    "ti-cloud",          "Mastodon"),
+            ("youtube",     "ti-brand-youtube",  "YouTube"),
+            ("file",        "ti-folder-open",    "File Upload"),
+            ("facebook",    "ti-brand-facebook", "Facebook"),
+            ("twitter",     "ti-brand-x",        "Twitter / X"),
+            ("unified",     "ti-share",          "Multi-Platform"),
+            ("resources",   "ti-ambulance",      "Crisis Resources"),
+            ("team",        "ti-users",          "Team"),
+        ]
+        _current = st.session_state.get("mg_page", "dashboard")
+        for _page_key, _icon, _label in _pages:
+            if _page_key == _current:
+                st.markdown(
+                    f'<div class="mg-sb-active">'
+                    f'<i class="ti {_icon}"></i> {_label}'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                if st.button(_label, key=f"nav_{_page_key}", use_container_width=True):
+                    st.session_state.mg_page = _page_key
+                    st.rerun()
+
+        # Footer — user identity
+        st.markdown(
+            f'<div class="mg-sb-footer">'
+            f'<div class="mg-sb-avatar">{_initials}</div>'
+            f'<div style="flex:1;min-width:0">'
+            f'<div class="mg-sb-uname">{_name}</div>'
+            f'<div class="mg-sb-uemail">{_email}</div>'
+            f'</div>'
+            f'<div class="mg-sb-pill">{_role_type.capitalize()}</div>'
             f'</div>',
             unsafe_allow_html=True,
         )
 
-        # ── Notifications ─────────────────────────────────────────────
-        st.markdown("### Notifications")
-        _unread_count = st.session_state.notifications_unread
-        if _unread_count > 0:
-            st.info(f"{_unread_count} unread notification(s)", icon="🔔")
-        else:
-            st.caption("No new notifications.")
+    # ── TOPBAR ────────────────────────────────────────────────────────
+    _page_titles = {
+        "dashboard": "Text / Image Analysis",
+        "reddit":    "Reddit Analysis",
+        "video":     "Video Analysis",
+        "bluesky":   "Bluesky Analysis",
+        "mastodon":  "Mastodon Analysis",
+        "youtube":   "YouTube Analysis",
+        "file":      "File Upload Analysis",
+        "facebook":  "Facebook Analysis",
+        "twitter":   "Twitter / X Analysis",
+        "unified":   "Multi-Platform Profile",
+        "resources": "Crisis Resources",
+        "team":      "Team",
+    }
+    _page_title = _page_titles.get(_current, "MindGuard")
+    _bell_dot = '<div class="mg-bell-dot"></div>' if _unread_count > 0 else ""
+    st.markdown(
+        f'<div class="mg-topbar">'
+        f'<div class="mg-topbar-title">{_page_title}</div>'
+        f'<div class="mg-topbar-right">'
+        f'<div class="mg-topbar-bell"><i class="ti ti-bell"></i>{_bell_dot}</div>'
+        f'<div class="mg-topbar-av">{_initials}</div>'
+        f'</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
-        if _unread_list:
+    # Sign-out (small, top-right)
+    _tb_l, _tb_r = st.columns([10, 1])
+    with _tb_r:
+        if st.button("Sign out", key="topbar_signout", help="Sign out"):
+            reset_auth_state()
+            st.rerun()
+
+    # Notifications inbox (when there are unread)
+    if _unread_list:
+        with st.expander(f"🔔 {_unread_count} unread notification(s)", expanded=False):
             if st.button("Mark all as read", key="notif_mark_all_read"):
                 for _n in _unread_list:
                     notifications_store.mark_read(_n["id"], st.session_state.auth_user)
@@ -1735,67 +2011,46 @@ def main_app() -> None:
             for _notif in _unread_list:
                 _subj = _notif.get("subject", "(no subject)")
                 _date = _notif.get("timestamp", "")[:10]
-                with st.expander(f"{_subj} · {_date}"):
-                    st.markdown(f"**From:** {_notif.get('sender','')}")
+                col_txt, col_btn = st.columns([5, 1])
+                with col_txt:
+                    st.markdown(f"**{_subj}** · {_date}")
+                    st.caption(f"From: {_notif.get('sender','')}")
                     st.markdown(_notif.get("body", ""))
-                    if st.button("Mark as read", key=f"notif_read_{_notif['id']}"):
+                with col_btn:
+                    if st.button("✓", key=f"notif_read_{_notif['id']}", help="Mark as read"):
                         notifications_store.mark_read(_notif["id"], st.session_state.auth_user)
                         st.rerun()
 
-        # ── Admin: send notification ──────────────────────────────────
-        if _role_type == "admin" and notifications_store is not None:
-            st.markdown("---")
-            st.markdown("### Send Message")
-            with st.expander("Compose notification"):
-                _notif_subject    = st.text_input("Subject", key="admin_notif_subject")
-                _notif_body       = st.text_area("Message", key="admin_notif_body", height=90)
-                _notif_target_opt = st.selectbox("To", ["All users", "Specific email"], key="admin_notif_target_opt")
-                _notif_target     = "all"
-                if _notif_target_opt == "Specific email":
-                    _notif_target = st.text_input("Recipient email", key="admin_notif_target_email")
-                if st.button("Send", key="admin_notif_send"):
-                    if _notif_subject and _notif_body:
-                        notifications_store.create_notification(
-                            sender_email=st.session_state.auth_user,
-                            target=_notif_target if _notif_target else "all",
-                            subject=_notif_subject,
-                            body=_notif_body,
-                        )
-                        st.success("Notification sent.")
-                    else:
-                        st.warning("Subject and message are required.")
+    # Admin: send notification
+    if _role_type == "admin" and notifications_store is not None:
+        with st.expander("📢 Send notification", expanded=False):
+            _notif_subject    = st.text_input("Subject", key="admin_notif_subject")
+            _notif_body       = st.text_area("Message", key="admin_notif_body", height=90)
+            _notif_target_opt = st.selectbox("To", ["All users", "Specific email"], key="admin_notif_target_opt")
+            _notif_target     = "all"
+            if _notif_target_opt == "Specific email":
+                _notif_target = st.text_input("Recipient email", key="admin_notif_target_email")
+            if st.button("Send", key="admin_notif_send"):
+                if _notif_subject and _notif_body:
+                    notifications_store.create_notification(
+                        sender_email=st.session_state.auth_user,
+                        target=_notif_target if _notif_target else "all",
+                        subject=_notif_subject,
+                        body=_notif_body,
+                    )
+                    st.success("Notification sent.")
+                else:
+                    st.warning("Subject and message are required.")
 
-        # ── Referral link ─────────────────────────────────────────────
-        _ref = st.session_state.get("referral_code", "")
-        if _ref:
-            st.markdown("---")
-            st.markdown("### Refer a Colleague")
+    # Referral link
+    _ref = st.session_state.get("referral_code", "")
+    if _ref:
+        with st.expander("🔗 Share referral link", expanded=False):
             _base_url = os.environ.get("APP_BASE_URL", "http://localhost:8501")
-            _ref_url  = f"{_base_url}?ref={_ref}"
             st.caption("Share this link to invite others:")
-            st.code(_ref_url, language=None)
+            st.code(f"{_base_url}?ref={_ref}", language=None)
 
-    header_col, signout_col = st.columns([6.2, 0.9], vertical_alignment="center")
-    with header_col:
-        st.markdown(f"""
-        <div class="app-shell">
-            <div class="app-header">
-                <div class="app-logo">
-                    <div style="font-size:16px;font-weight:800;color:#0F766E;letter-spacing:-0.5px;">MindGuard AI</div>
-                </div>
-                <div>
-                    <div class="app-header-title">MindGuard</div>
-                    <div class="app-subtitle">Early detection of suicidal ideation — Mental-RoBERTa NLP model</div>
-                </div>
-            </div>
-            <div class="signed-in-chip">{st.session_state.auth_role} — {st.session_state.auth_user}</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with signout_col:
-        if st.button("Sign out", use_container_width=True, key="sign_out"):
-            reset_auth_state()
-            st.rerun()
-
+    # Reusable: render a single team card
     def render_team_card(member: dict) -> None:
         st.markdown(f"""
         <div class="team-card">
@@ -1809,35 +2064,41 @@ def main_app() -> None:
         </div>
         """, unsafe_allow_html=True)
 
-    (tab_text, tab_reddit, tab_video, tab_bluesky,
-     tab_mastodon, tab_youtube, tab_file,
-     tab_facebook, tab_twitter,
-     tab_unified, tab_resources, tab_team) = st.tabs([
-        "Text / Image", "Reddit", "Video (any platform)", "Bluesky",
-        "Mastodon", "YouTube", "File Upload", "Facebook", "Twitter / X",
-        "Multi-Platform", "Resources", "Teams",
-    ])
+    # ── PAGE ROUTING ──────────────────────────────────────────────────
+    # Dashboard: 3-column Input | Prediction | Analytics
+    if _current == "dashboard":
+        col_input, col_pred, col_analytics = st.columns([1, 1.2, 1])
 
-    # 7. Text / Image tab
-    with tab_text:
-        colA, colB, colC = st.columns([1.0, 1.25, 1.05])
-        with colA:
-            st.markdown("<h2>Input</h2>", unsafe_allow_html=True)
-            st.markdown('<hr class="divider">', unsafe_allow_html=True)
+        # ── Input panel ────────────────────────────────────────────────
+        with col_input:
+            st.markdown(
+                '<div class="mg-panel"><div class="mg-panel-title">'
+                '<i class="ti ti-pencil"></i> Input</div>',
+                unsafe_allow_html=True,
+            )
             m1, m2 = st.columns(2)
             with m1:
-                if st.button("Type Text", use_container_width=True):
+                if st.button("Type Text", use_container_width=True, key="mode_text_btn"):
                     st.session_state.input_mode = "text"; st.rerun()
             with m2:
-                if st.button("Upload Image", use_container_width=True):
+                if st.button("Upload Image", use_container_width=True, key="mode_image_btn"):
                     st.session_state.input_mode = "image"; st.rerun()
-            st.markdown('<div style="margin-top:0.3rem"></div>', unsafe_allow_html=True)
+
             if st.session_state.input_mode == "text":
                 with st.expander("Try a sample", expanded=False):
                     for label, tweet in SAMPLE_TWEETS.items():
                         if st.button(label, key=f"sample_{label}", use_container_width=True):
-                            st.session_state.user_input = tweet; st.session_state["text_area"] = tweet; st.session_state.should_analyze = True; st.rerun()
-                user_input = st.text_area("Enter text to analyse:", height=108, placeholder="Type or paste text here...", value=st.session_state.user_input, key="text_area")
+                            st.session_state.user_input = tweet
+                            st.session_state["text_area"] = tweet
+                            st.session_state.should_analyze = True
+                            st.rerun()
+                user_input = st.text_area(
+                    "Enter text to analyse:",
+                    height=108,
+                    placeholder="Type or paste text here...",
+                    value=st.session_state.user_input,
+                    key="text_area",
+                )
                 st.session_state.user_input = user_input
                 b1, b2 = st.columns(2)
                 with b1:
@@ -1850,7 +2111,11 @@ def main_app() -> None:
                     if st.button("Clear", use_container_width=True, key="clear_btn"):
                         clear_text(); st.rerun()
             else:
-                uploaded_img = st.file_uploader("Upload an image", type=["png", "jpg", "jpeg", "webp"], key="img_upload")
+                uploaded_img = st.file_uploader(
+                    "Upload an image",
+                    type=["png", "jpg", "jpeg", "webp"],
+                    key="img_upload",
+                )
                 if uploaded_img:
                     img_text = extract_text_from_image(uploaded_img)
                     if img_text:
@@ -1859,51 +2124,107 @@ def main_app() -> None:
                         st.success(f"Extracted {len(img_text)} characters from image.")
                     else:
                         st.error("Could not extract text. Ensure the image contains readable text and pytesseract is installed.")
+            # Run inference once per click
             if st.session_state.should_analyze and st.session_state.user_input.strip():
                 prob, ms = run_analysis(st.session_state.user_input)
-                st.session_state.last_result  = {"prob": prob, "ms": ms, "text": st.session_state.user_input}
+                st.session_state.last_result   = {"prob": prob, "ms": ms, "text": st.session_state.user_input}
                 st.session_state.download_text = build_download_text(st.session_state.user_input, prob, ms)
                 st.session_state.should_analyze = False
+            st.markdown('</div>', unsafe_allow_html=True)
 
-        with colB:
-            st.markdown("<h2>Prediction</h2>", unsafe_allow_html=True)
-            st.markdown('<hr class="divider">', unsafe_allow_html=True)
+        # ── Prediction panel ───────────────────────────────────────────
+        with col_pred:
+            st.markdown(
+                '<div class="mg-panel"><div class="mg-panel-title">'
+                '<i class="ti ti-chart-donut"></i> Prediction</div>',
+                unsafe_allow_html=True,
+            )
             res = st.session_state.last_result
             if res is None:
-                st.markdown('<div style="text-align:center;padding:3rem 1rem;color:#6b7280"><p>Enter text and click Analyse.</p></div>', unsafe_allow_html=True)
+                st.markdown(
+                    '<div style="text-align:center;padding:2.4rem 1rem;color:#9ca3af;font-size:0.78rem">'
+                    'Enter text and click Analyse.</div>',
+                    unsafe_allow_html=True,
+                )
             else:
                 prob = res["prob"]; ms = res["ms"]
-                lbl, col, cls = risk_label(prob)
+                _lbl, _color, _cls = risk_label(prob)
                 conf = prob if prob >= 0.5 else (1 - prob)
-                st.plotly_chart(gauge(prob), use_container_width=True)
-                verdict_color = "#dc2626" if prob >= 0.5 else "#0F6E56"
-                verdict_text  = "Suicidal / High Risk" if prob >= 0.5 else "Non-Suicidal / Low Risk"
-                st.markdown(f'<div class="result-card"><div style="font-size:1.05rem;font-weight:800;color:{verdict_color}">{verdict_text}</div><div style="font-size:0.78rem;color:#4b5563;margin-top:0.3rem">Risk Score: <strong>{prob:.1%}</strong> &nbsp;|&nbsp; Confidence: <strong>{conf:.1%}</strong> &nbsp;|&nbsp; Latency: <strong>{ms:.0f}ms</strong></div></div>', unsafe_allow_html=True)
-                if prob >= 0.55:
-                    st.error("CRISIS ALERT — High-risk language detected. Refer to crisis resources immediately.")
-                elif prob >= 0.35:
-                    st.warning("Moderate risk detected. Consider follow-up.")
+                st.plotly_chart(gauge(prob), use_container_width=True, config={"displayModeBar": False})
+                st.markdown(f"""
+<div class="mg-risk-row">
+  <div class="mg-risk-stat"><div class="mg-risk-val" style="color:{_color}">{prob:.0%}</div><div class="mg-risk-lbl">Risk Score</div></div>
+  <div class="mg-risk-stat"><div class="mg-risk-val" style="color:{_color}">{conf:.0%}</div><div class="mg-risk-lbl">Confidence</div></div>
+  <div class="mg-risk-stat"><div class="mg-risk-val">{ms:.0f}ms</div><div class="mg-risk-lbl">Latency</div></div>
+</div>
+""", unsafe_allow_html=True)
+                if prob >= 0.5:
+                    st.markdown(
+                        '<div class="mg-alert-box"><i class="ti ti-alert-triangle"></i> '
+                        'Crisis alert — high-risk language detected</div>',
+                        unsafe_allow_html=True,
+                    )
                 else:
-                    st.success("Low risk detected.")
+                    st.markdown(
+                        '<div class="mg-safe-box"><i class="ti ti-circle-check"></i> '
+                        'No high-risk signals detected</div>',
+                        unsafe_allow_html=True,
+                    )
                 if st.session_state.download_text:
-                    st.download_button("Download report", st.session_state.download_text, file_name="mindguard_report.txt", use_container_width=True)
+                    st.download_button(
+                        "Download report",
+                        st.session_state.download_text,
+                        file_name="mindguard_report.txt",
+                        use_container_width=True,
+                    )
+            st.markdown('</div>', unsafe_allow_html=True)
 
-        with colC:
-            st.markdown("<h2>Session Analytics</h2>", unsafe_allow_html=True)
-            st.markdown('<hr class="divider">', unsafe_allow_html=True)
+        # ── Session analytics panel ───────────────────────────────────
+        with col_analytics:
+            st.markdown(
+                '<div class="mg-panel"><div class="mg-panel-title">'
+                '<i class="ti ti-chart-bar"></i> Session Analytics</div>',
+                unsafe_allow_html=True,
+            )
             a = st.session_state.analytics
             total = a["total_analyses"]
             if total == 0:
-                st.markdown('<div style="text-align:center;padding:2rem 1rem;color:#6b7280"><p>No analyses yet.</p></div>', unsafe_allow_html=True)
+                st.markdown(
+                    '<div style="text-align:center;padding:1.6rem 1rem;color:#9ca3af;font-size:0.78rem">'
+                    'No analyses yet.</div>',
+                    unsafe_allow_html=True,
+                )
             else:
-                st.markdown(f'<div class="stat-row"><div class="stat-card"><div class="stat-number">{total}</div><div class="stat-label">Analysed</div></div><div class="stat-card"><div class="stat-number">{a["negative_count"]}</div><div class="stat-label">At-Risk</div></div><div class="stat-card"><div class="stat-number">{a["positive_count"]}</div><div class="stat-label">Safe</div></div></div>', unsafe_allow_html=True)
-                st.markdown('<p class="section-label">Recent history</p>', unsafe_allow_html=True)
-                for entry in reversed(a["history"]):
-                    clr = "#dc2626" if entry["cls"] == "Suicidal" else "#0F6E56"
-                    st.markdown(f'<div style="display:flex;align-items:center;gap:0.4rem;margin:0.15rem 0;font-size:0.72rem;color:#4b5563"><span style="color:{clr};font-weight:700;min-width:72px">{entry["cls"][:10]}</span><span style="color:#6b7280;min-width:38px">{entry["ts"]}</span><span>{entry["txt"]}</span></div>', unsafe_allow_html=True)
+                st.markdown(f"""
+<div class="mg-stat-row">
+  <div class="mg-stat-card"><div class="mg-stat-num">{total}</div><div class="mg-stat-lbl">Analysed</div></div>
+  <div class="mg-stat-card"><div class="mg-stat-num" style="color:#dc2626">{a['negative_count']}</div><div class="mg-stat-lbl">At-Risk</div></div>
+  <div class="mg-stat-card"><div class="mg-stat-num" style="color:#10b981">{a['positive_count']}</div><div class="mg-stat-lbl">Safe</div></div>
+</div>
+""", unsafe_allow_html=True)
+                st.markdown(
+                    '<div style="font-size:0.6rem;font-weight:700;color:#0F766E;text-transform:uppercase;'
+                    'letter-spacing:0.1em;margin-bottom:6px;padding-bottom:6px;'
+                    'border-bottom:0.5px solid #f1f5f9">Recent history</div>',
+                    unsafe_allow_html=True,
+                )
+                for entry in reversed(a.get("history", [])[-5:]):
+                    _cls_label = entry.get("cls", "Unknown")
+                    _cls_class = "risk" if _cls_label == "Suicidal" else "safe"
+                    _txt = entry.get("txt", "")
+                    _ts = entry.get("ts", "")
+                    st.markdown(
+                        f'<div class="mg-history-row">'
+                        f'<span class="mg-h-cls {_cls_class}">{_cls_label}</span>'
+                        f'<span class="mg-h-ts">{_ts}</span>'
+                        f'<span class="mg-h-txt">{_txt}</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+            st.markdown('</div>', unsafe_allow_html=True)
 
-    # 8. Reddit tab
-    with tab_reddit:
+    # ── Reddit page ──────────────────────────────────────────────────
+    elif _current == "reddit":
         rA, rB = st.columns([1, 2])
         with rA:
             st.markdown("<h2>Reddit User Analysis</h2>", unsafe_allow_html=True)
@@ -1950,8 +2271,8 @@ def main_app() -> None:
                     render_post_cards(filtered, sub_col="subreddit", url_col="url", type_col="type", n=res["n_show"])
                 with s3: render_socio(res["signals"])
 
-    # Video tab
-    with tab_video:
+    # ── Video page ───────────────────────────────────────────────────
+    elif _current == "video":
         vA, vB = st.columns([1, 1.4])
         with vA:
             st.markdown("<h2>Video Analysis</h2>", unsafe_allow_html=True)
@@ -2018,8 +2339,8 @@ def main_app() -> None:
             st.markdown('<p class="section-label">Socio-Economic Signals in Transcript</p>', unsafe_allow_html=True)
             render_socio(detect_socioeconomic([{"text": vr2["transcript"]}]))
 
-    # Bluesky tab
-    with tab_bluesky:
+    # ── Bluesky page ─────────────────────────────────────────────────
+    elif _current == "bluesky":
         st.markdown("<h2>Bluesky Analysis</h2>", unsafe_allow_html=True)
         st.markdown('<p style="font-size:0.74rem;color:#6b7280">Fetches 3 months of posts for any public Bluesky account. Requires your Bluesky credentials.</p>', unsafe_allow_html=True)
         st.markdown('<hr class="divider">', unsafe_allow_html=True)
@@ -2083,8 +2404,8 @@ def main_app() -> None:
                 render_post_cards(filtered, url_col="url", n=res["n_show"])
             with s3: render_socio(res["signals"])
 
-    # Mastodon tab
-    with tab_mastodon:
+    # ── Mastodon page ────────────────────────────────────────────────
+    elif _current == "mastodon":
         mA, mB = st.columns([1, 2])
         with mA:
             st.markdown("<h2>Mastodon Analysis</h2>", unsafe_allow_html=True)
@@ -2123,8 +2444,8 @@ def main_app() -> None:
                     render_post_cards(filtered, url_col="url", n=res["n_show"])
                 with s3: render_socio(res["signals"])
 
-    # YouTube tab
-    with tab_youtube:
+    # ── YouTube page ─────────────────────────────────────────────────
+    elif _current == "youtube":
         yA, yB = st.columns([1, 2])
         with yA:
             st.markdown("<h2>YouTube Channel Analysis</h2>", unsafe_allow_html=True)
@@ -2166,8 +2487,8 @@ def main_app() -> None:
                     render_post_cards(filtered, url_col="url", n=res["n_show"])
                 with s3: render_socio(res["signals"])
 
-    # File Upload tab 
-    with tab_file:
+    # ── File Upload page ─────────────────────────────────────────────
+    elif _current == "file":
         fA, fB = st.columns([1, 2])
         with fA:
             st.markdown("<h2>File Upload Analysis</h2>", unsafe_allow_html=True)
@@ -2207,8 +2528,8 @@ def main_app() -> None:
                     render_post_cards(filtered, n=res["n_show"])
                 with s3: render_socio(res["signals"])
 
-    # Facebook tab
-    with tab_facebook:
+    # ── Facebook page ────────────────────────────────────────────────
+    elif _current == "facebook":
         st.markdown("<h2>Facebook Public Profile Analysis</h2>", unsafe_allow_html=True)
         st.markdown('<p style="font-size:0.74rem;color:#6b7280">Scrapes public posts from a Facebook profile. Only works for profiles with public post visibility.</p>', unsafe_allow_html=True)
         st.markdown('<div style="background:#fffbeb;border-radius:8px;padding:0.45rem 0.7rem;border:1px solid #fde68a;margin-bottom:0.5rem"><p style="color:#92400e;font-size:0.74rem;margin:0">Only publicly visible posts are accessed. Research use under ethics approval TUM-SERC MSC/028/2025A.</p></div>', unsafe_allow_html=True)
@@ -2261,8 +2582,8 @@ def main_app() -> None:
                 render_post_cards(filtered, url_col="url", n=res["n_show"])
             with s2: render_socio(res["signals"])
 
-    # Twitter / X tab
-    with tab_twitter:
+    # ── Twitter / X page ─────────────────────────────────────────────
+    elif _current == "twitter":
         st.markdown("<h2>Twitter / X Public Profile Analysis</h2>", unsafe_allow_html=True)
         st.markdown('<p style="font-size:0.74rem;color:#6b7280">Scrapes public tweets using a headless browser. Only works for public profiles.</p>', unsafe_allow_html=True)
         st.markdown('<div style="background:#fffbeb;border-radius:8px;padding:0.45rem 0.7rem;border:1px solid #fde68a;margin-bottom:0.5rem"><p style="color:#92400e;font-size:0.74rem;margin:0">Twitter/X increasingly requires login to view profiles. If scraping fails, use the File Upload tab with a Twitter data archive instead.</p></div>', unsafe_allow_html=True)
@@ -2313,8 +2634,8 @@ def main_app() -> None:
                 render_post_cards(filtered, url_col="url", n=res["n_show"])
             with s2: render_socio(res["signals"])
 
-    # Multi-Platform tab
-    with tab_unified:
+    # ── Multi-Platform page ──────────────────────────────────────────
+    elif _current == "unified":
         st.markdown("<h2>Multi-Platform Unified Risk Profile</h2>", unsafe_allow_html=True)
         st.markdown('<p style="font-size:0.74rem;color:#6b7280">Combines results from all platforms you have already analysed in this session into one unified risk profile.</p>', unsafe_allow_html=True)
         st.markdown('<hr class="divider">', unsafe_allow_html=True)
@@ -2372,8 +2693,8 @@ def main_app() -> None:
             report_lines.append(f"\nTimestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
             st.download_button("Download unified report", "".join(report_lines), file_name="mindguard_unified_report.txt", use_container_width=True)
 
-    # Resources tab
-    with tab_resources:
+    # ── Resources page ───────────────────────────────────────────────
+    elif _current == "resources":
         st.markdown("<h2>Crisis Resources</h2>", unsafe_allow_html=True)
         st.markdown('<p style="font-size:0.74rem;color:#6b7280">Select your country or US state to see local crisis resources.</p>', unsafe_allow_html=True)
         st.markdown('<hr class="divider">', unsafe_allow_html=True)
@@ -2410,8 +2731,8 @@ def main_app() -> None:
                 unsafe_allow_html=True,
             )
 
-    # Teams tab
-    with tab_team:
+    # ── Team page ────────────────────────────────────────────────────
+    elif _current == "team":
         st.markdown("""
         <div class="team-hero">
             <div>
