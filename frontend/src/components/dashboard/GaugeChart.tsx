@@ -7,7 +7,6 @@ export default function GaugeChart({ prob }: GaugeChartProps) {
   const intensity = 2 * Math.abs(prob - 0.5)
   const displayPct = intensity * 100
   const color = isRisk ? '#dc2626' : '#0F6E56'
-  const needlePct = isRisk ? 50 + displayPct / 2 : 50 - displayPct / 2
 
   const circumference = 176
 
@@ -35,8 +34,8 @@ export default function GaugeChart({ prob }: GaugeChartProps) {
         <line
           x1="80"
           y1="84"
-          x2={80 + 62 * Math.cos(Math.PI - (needlePct / 100) * Math.PI)}
-          y2={84 - 62 * Math.sin(Math.PI - (needlePct / 100) * Math.PI)}
+          x2={80 + 62 * Math.cos(Math.PI - (displayPct / 100) * Math.PI)}
+          y2={84 - 62 * Math.sin(Math.PI - (displayPct / 100) * Math.PI)}
           stroke={color}
           strokeWidth="2.5"
           strokeLinecap="round"
