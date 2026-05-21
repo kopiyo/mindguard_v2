@@ -7,23 +7,9 @@ COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt huggingface_hub
 
 ARG HF_TOKEN
-ARG HUGGINGFACE_TOKEN
-RUN --mount=type=secret,id=HF_TOKEN \
-    TOKEN=${HF_TOKEN:-$(cat /run/secrets/HF_TOKEN 2>/dev/null || echo "")} && \
-    if [ -n "$TOKEN" ]; then \
-      python -c "
-from huggingface_hub import snapshot_download, hf_hub_download
-repo = 'kopiyodiana/mindguard-mental-roberta'
-snapshot_download(repo_id=repo, allow_patterns='mindguard_tokenizer/*',
-                  token='$TOKEN', local_dir='./download')
-import shutil, os
-for f in os.listdir('./download/mindguard_tokenizer'):
-    shutil.move(os.path.join('./download/mindguard_tokenizer', f), './')
-shutil.rmtree('./download/mindguard_tokenizer')
-hf_hub_download(repo_id=repo, filename='mindguard_best_weights.pt',
-                token='$TOKEN', local_dir='./weights')
-"; \
-    fi
+ENV HF_TOKEN=$HF_TOKEN
+COPY backend/scripts/download_model.py /build/download_model.py
+RUN python /build/download_model.py
 
 # ─── Stage 2: Runtime ──────────────────────────────────────────────────────────
 FROM python:3.11-slim
