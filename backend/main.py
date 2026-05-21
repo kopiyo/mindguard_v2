@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import logging
@@ -27,7 +28,7 @@ from backend.models.schemas import (
     GroupMessageRequest, UpdateNotificationPreferenceRequest,
     MuteGroupRequest, NOTIFICATION_TYPES,
 )
-from backend.services.predictor import predict_one, predict_batch
+from backend.services.predictor import predict_one, predict_batch, keep_space_warm
 from backend.utils import clean_text, risk_label, detect_socioeconomic, RESOURCES, US_STATE_RESOURCES, TEAM_MEMBERS
 from backend.database import (
     init_db, seed_defaults,
@@ -79,10 +80,11 @@ app.add_middleware(
 
 
 @app.on_event("startup")
-def startup():
+async def startup():
     init_db()
     seed_defaults()
     logger.info("Database initialized and seeded")
+    asyncio.create_task(keep_space_warm())
 
 
 @app.get("/api/health")
@@ -312,7 +314,11 @@ async def analyze_image(file: UploadFile = File(...), user: dict = Depends(requi
             raise HTTPException(400, "No text could be extracted from the image")
 
         cleaned = clean_text(text)
-        prob, ms = await predict_one(cleaned)
+        try:
+            prob, ms = await predict_one(cleaned)
+        except Exception as exc:
+            logger.error("ML inference error: %s", exc)
+            raise HTTPException(503, "Analysis service temporarily unavailable. Please try again in a moment.")
         cls = "Suicidal" if prob >= 0.5 else "Non-Suicidal"
         save_analysis(user["id"], "image", "[Image OCR] " + text, prob, cls)
         analytics = get_analytics(user["id"])
