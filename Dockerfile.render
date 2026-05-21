@@ -41,7 +41,9 @@ COPY --from=model-builder /build/merges.txt /app/mindguard_tokenizer/
 
 # Backend
 COPY backend/requirements.txt /app/
-RUN pip install --no-cache-dir gunicorn -r requirements.txt
+# Install CPU-only torch first (avoids pulling the much larger CUDA build)
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir gunicorn transformers huggingface_hub -r requirements.txt
 COPY backend/ /app/backend/
 
 ENV FRONTEND_DIR=/app/frontend
