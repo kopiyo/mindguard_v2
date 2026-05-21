@@ -51,22 +51,18 @@ export default function StudentCommunicationsPage() {
 
   useEffect(() => {
     if (!activeConversation || chatMode !== 'direct') return
-    setLoading(true)
     getDirectConversation(activeConversation).then((data) => {
       setDirectMessages(data || [])
-      setLoading(false)
-    }).catch(() => setLoading(false))
+    }).catch(() => {})
   }, [activeConversation, chatMode])
 
   useEffect(() => {
     if (!activeGroupId || chatMode !== 'group') return
-    setLoading(true)
     getGroupMessages(activeGroupId).then((data) => {
       setGroupMessages(data.messages || [])
       markGroupRead(activeGroupId).catch(() => {})
       loadData()
-      setLoading(false)
-    }).catch(() => setLoading(false))
+    }).catch(() => {})
   }, [activeGroupId, chatMode, loadData])
 
   const handleSend = async () => {

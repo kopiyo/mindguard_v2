@@ -56,7 +56,7 @@ export default function Sidebar() {
   const referralCount = useCounsellorStore((s) => s.referralCount)
   const {
     notifications, unreadCount, fetchNotifications,
-    markRead, markAllRead, fetchPreferences, unreadByType,
+    markRead, markAllRead, fetchPreferences,
   } = useNotificationStore()
   const [openAlertCount, setOpenAlertCount] = useState(0)
   const [showNotifs, setShowNotifs] = useState(false)

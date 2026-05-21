@@ -261,10 +261,9 @@ export interface GroupConversationPreview {
 }
 
 export interface Conversation {
-  id: string
-  other_user_id: string
-  other_user_name: string
-  other_user_email: string
+  other_id: string
+  other_name: string
+  other_email: string
   last_message: string
   last_time: string
   last_sender: string

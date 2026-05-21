@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { getAlerts, disposeAlert } from '../api/counsellor'
 import { getRiskLabel } from '../types'
 import type { Alert, AlertDisposition } from '../types'
