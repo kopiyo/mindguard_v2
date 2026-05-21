@@ -109,7 +109,7 @@ export function getClassification(prob: number): Classification {
 }
 
 export function formatPercent(value: number): string {
-  return `${(value * 100).toFixed(0)}%`
+  return `${(value * 100).toFixed(1)}%`
 }
 
 // ─── Consent & Account Linking ───────────────────────────────────────────────

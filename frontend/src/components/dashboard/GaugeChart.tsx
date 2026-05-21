@@ -49,7 +49,7 @@ export default function GaugeChart({ prob }: GaugeChartProps) {
         />
         <circle cx="80" cy="84" r="6" fill={color} />
         <text x="80" y="70" textAnchor="middle" fontSize="18" fontWeight="800" fill={color}>
-          {Math.round(prob * 100)}%
+          {(prob * 100).toFixed(1)}%
         </text>
       </svg>
       <div
