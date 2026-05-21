@@ -9,6 +9,7 @@ mindguard_onnx/
 # Data files — do not commit
 *.csv
 *.txt
+!**/requirements.txt
 training_history.json
 mindguard_unified_report*.txt
 
