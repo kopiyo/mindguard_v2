@@ -1,12 +1,35 @@
+import os
 import gradio as gr
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from huggingface_hub import hf_hub_download
 
-MODEL_NAME = "kopiyodiana/mindguard-mental-roberta"
+BASE_MODEL = "roberta-base"
+REPO_ID = "kopiyodiana/mindguard-mental-roberta"
+WEIGHTS_FILE = "mindguard_best_weights.pt"
+HF_TOKEN = os.environ.get("HF_TOKEN")
 
-print("Loading model...")
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
+print("Loading tokenizer from base model...")
+tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
+
+print("Loading base model architecture...")
+model = AutoModelForSequenceClassification.from_pretrained(
+    BASE_MODEL, num_labels=2, ignore_mismatched_sizes=True
+)
+
+print(f"Downloading fine-tuned weights from {REPO_ID}...")
+try:
+    weights_path = hf_hub_download(
+        repo_id=REPO_ID,
+        filename=WEIGHTS_FILE,
+        token=HF_TOKEN,
+    )
+    state = torch.load(weights_path, map_location="cpu", weights_only=True)
+    model.load_state_dict(state, strict=False)
+    print("Fine-tuned weights loaded.")
+except Exception as e:
+    print(f"Could not load fine-tuned weights ({e}), using base model.")
+
 model.eval()
 print("Model ready.")
 
