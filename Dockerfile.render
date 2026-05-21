@@ -58,6 +58,6 @@ CMD ["gunicorn", "backend.main:app", \
      "--worker-class", "uvicorn.workers.UvicornWorker", \
      "--workers", "1", \
      "--bind", "0.0.0.0:10000", \
-     "--timeout", "120", \
+     "--timeout", "300", \
      "--keep-alive", "5", \
      "--log-level", "info"]

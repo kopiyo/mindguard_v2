@@ -83,6 +83,17 @@ def startup():
     init_db()
     seed_defaults()
     logger.info("Database initialized and seeded")
+    # Pre-warm the ML model in a background thread so the first real
+    # request doesn't stall and hit Gunicorn's timeout.
+    import threading
+    def _warm():
+        try:
+            from backend.models.loader import load_model
+            load_model()
+            logger.info("ML model loaded and ready")
+        except Exception as exc:
+            logger.warning("ML model pre-warm failed (will retry on first request): %s", exc)
+    threading.Thread(target=_warm, daemon=True).start()
 
 
 @app.get("/api/health")
