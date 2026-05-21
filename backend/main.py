@@ -281,7 +281,11 @@ async def google_auth(data: dict, request: Request):
 @app.post("/api/analysis/text")
 async def analyze_text(req: TextAnalysisRequest, user: dict = Depends(require_auth)):
     cleaned = clean_text(req.text)
-    prob, ms = predict_one(cleaned)
+    try:
+        prob, ms = await predict_one(cleaned)
+    except Exception as exc:
+        logger.error("ML inference error: %s", exc)
+        raise HTTPException(503, "Analysis service temporarily unavailable. Please try again in a moment.")
 
     cls = "Suicidal" if prob >= 0.5 else "Non-Suicidal"
     save_analysis(user["id"], "text", req.text, prob, cls)
@@ -308,7 +312,7 @@ async def analyze_image(file: UploadFile = File(...), user: dict = Depends(requi
             raise HTTPException(400, "No text could be extracted from the image")
 
         cleaned = clean_text(text)
-        prob, ms = predict_one(cleaned)
+        prob, ms = await predict_one(cleaned)
         cls = "Suicidal" if prob >= 0.5 else "Non-Suicidal"
         save_analysis(user["id"], "image", "[Image OCR] " + text, prob, cls)
         analytics = get_analytics(user["id"])
@@ -385,7 +389,7 @@ async def analyze_reddit(req: PlatformRequest, user: dict = Depends(require_auth
             })
 
         text_col = [clean_text(p["text"]) for p in raw_posts]
-        scores = predict_batch(text_col)
+        scores = await predict_batch(text_col)
         for i, p in enumerate(raw_posts):
             p["risk_score"] = float(scores[i])
 
@@ -448,7 +452,7 @@ async def analyze_bluesky(req: PlatformRequest, user: dict = Depends(require_aut
             cursor = feed.cursor
 
         texts = [clean_text(p["text"]) for p in raw_posts]
-        scores = predict_batch(texts)
+        scores = await predict_batch(texts)
         for i, p in enumerate(raw_posts):
             p["risk_score"] = float(scores[i])
 
@@ -509,7 +513,7 @@ async def analyze_mastodon(req: PlatformRequest, user: dict = Depends(require_au
             max_id = statuses[-1]["id"]
 
         texts = [clean_text(p["text"]) for p in raw_posts]
-        scores = predict_batch(texts)
+        scores = await predict_batch(texts)
         for i, p in enumerate(raw_posts):
             p["risk_score"] = float(scores[i])
 
@@ -588,7 +592,7 @@ async def analyze_youtube(req: PlatformRequest, user: dict = Depends(require_aut
                 break
 
         texts = [clean_text(p["text"]) for p in raw_posts]
-        scores = predict_batch(texts)
+        scores = await predict_batch(texts)
         for i, p in enumerate(raw_posts):
             p["risk_score"] = float(scores[i])
 
@@ -645,7 +649,7 @@ async def analyze_video(req: PlatformRequest, user: dict = Depends(require_auth)
             segments, _ = whisper.transcribe(trimmed)
             transcript = " ".join(seg.text for seg in segments)
 
-            prob, ms = predict_one(clean_text(transcript))
+            prob, ms = await predict_one(clean_text(transcript))
             label, color, level = risk_label(prob)
             result = {
                 "ok": True,
@@ -722,7 +726,7 @@ async def analyze_file(
             raise HTTPException(400, "No posts found in file")
 
         texts = [clean_text(p["text"]) for p in raw_posts]
-        scores = predict_batch(texts)
+        scores = await predict_batch(texts)
         for i, p in enumerate(raw_posts):
             p["risk_score"] = float(scores[i])
 
