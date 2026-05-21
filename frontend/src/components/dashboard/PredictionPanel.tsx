@@ -24,6 +24,7 @@ export default function PredictionPanel({ result }: PredictionPanelProps) {
 
   const isHighRisk = result.prob >= 0.5
   const riskInfo = getRiskLabel(result.prob)
+  const displayConfidence = (2 * Math.abs(result.prob - 0.5) * 100).toFixed(1)
 
   return (
     <div className="bg-white rounded-xl border border-[rgba(229,231,235,0.7)] p-[18px_20px]">
@@ -37,8 +38,8 @@ export default function PredictionPanel({ result }: PredictionPanelProps) {
       {/* Risk stats */}
       <div className="grid grid-cols-3 gap-[8px] mt-[12px] w-full">
         <div className="bg-[#fafbfc] rounded-[8px] border-[0.5px] border-[#f1f5f9] p-[8px_10px] text-center">
-          <div className="text-[0.95rem] font-bold text-[#0F766E]">{(result.prob * 100).toFixed(1)}%</div>
-          <div className="text-[0.65rem] text-[#9ca3af] font-semibold uppercase tracking-[0.06em] mt-[2px]">Risk Score</div>
+          <div className="text-[0.95rem] font-bold" style={{ color: isHighRisk ? '#dc2626' : '#0F766E' }}>{displayConfidence}%</div>
+          <div className="text-[0.65rem] text-[#9ca3af] font-semibold uppercase tracking-[0.06em] mt-[2px]">Confidence</div>
         </div>
         <div className="bg-[#fafbfc] rounded-[8px] border-[0.5px] border-[#f1f5f9] p-[8px_10px] text-center">
           <div className="text-[0.95rem] font-bold" style={{ color: riskInfo.color }}>{riskInfo.label}</div>
