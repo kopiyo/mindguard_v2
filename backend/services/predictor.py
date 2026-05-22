@@ -69,7 +69,7 @@ async def keep_space_warm() -> None:
     while True:
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                await client.get(f"{_SPACE_BASE}/")
+                await client.get(f"{_SPACE_BASE}/health")
             logger.debug("Space keep-warm ping sent")
         except Exception as exc:
             logger.debug("Space keep-warm ping failed (ok if starting): %s", exc)
