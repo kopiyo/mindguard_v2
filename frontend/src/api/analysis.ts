@@ -30,23 +30,61 @@ export async function analyzeImage(file: File): Promise<TextAnalysisResponse> {
   return data
 }
 
-export async function analyzeReddit(username: string, minRisk = 0, nShow = 20): Promise<PlatformResult> {
-  const { data } = await api.post('/platforms/reddit', { username, min_risk: minRisk, n_show: nShow })
+export async function analyzeReddit(
+  username: string,
+  clientId: string,
+  clientSecret: string,
+  minRisk = 0,
+  nShow = 20,
+): Promise<PlatformResult> {
+  const { data } = await api.post('/platforms/reddit', {
+    username,
+    client_id: clientId,
+    client_secret: clientSecret,
+    min_risk: minRisk,
+    n_show: nShow,
+  })
   return data
 }
 
-export async function analyzeBluesky(handle: string, password: string, minRisk = 0, nShow = 20): Promise<PlatformResult> {
-  const { data } = await api.post('/platforms/bluesky', { handle, password, min_risk: minRisk, n_show: nShow })
+export async function analyzeBluesky(
+  handle: string,
+  identifier: string,
+  password: string,
+  minRisk = 0,
+  nShow = 20,
+): Promise<PlatformResult> {
+  const { data } = await api.post('/platforms/bluesky', {
+    handle,
+    identifier,
+    password,
+    min_risk: minRisk,
+    n_show: nShow,
+  })
   return data
 }
 
-export async function analyzeMastodon(handle: string, instance: string, minRisk = 0, nShow = 20): Promise<PlatformResult> {
-  const { data } = await api.post('/platforms/mastodon', { handle, instance, min_risk: minRisk, n_show: nShow })
+export async function analyzeMastodon(handle: string, minRisk = 0, nShow = 20): Promise<PlatformResult> {
+  const { data } = await api.post('/platforms/mastodon', { handle, min_risk: minRisk, n_show: nShow })
   return data
 }
 
-export async function analyzeYouTube(channelUrl: string, apiKey: string, minRisk = 0, nShow = 20): Promise<PlatformResult> {
-  const { data } = await api.post('/platforms/youtube', { channel_url: channelUrl, api_key: apiKey, min_risk: minRisk, n_show: nShow })
+export async function analyzeYouTube(
+  channelUrl: string,
+  apiKey: string,
+  minRisk = 0,
+  nShow = 20,
+  transcribeVideos = true,
+  transcriptLimit = 3,
+): Promise<PlatformResult> {
+  const { data } = await api.post('/platforms/youtube', {
+    channel_url: channelUrl,
+    api_key: apiKey,
+    min_risk: minRisk,
+    n_show: nShow,
+    transcribe_videos: transcribeVideos,
+    transcript_limit: transcriptLimit,
+  })
   return data
 }
 
@@ -55,13 +93,22 @@ export async function analyzeVideo(videoUrl: string): Promise<VideoResult> {
   return data
 }
 
-export async function analyzeFacebook(profileUrl: string): Promise<PlatformResult> {
-  const { data } = await api.post('/platforms/facebook', { profile_url: profileUrl })
+export async function analyzeFacebook(profileUrl: string, months = 3, minRisk = 0, nShow = 20): Promise<PlatformResult> {
+  const { data } = await api.post('/platforms/facebook', {
+    profile_url: profileUrl,
+    months,
+    min_risk: minRisk,
+    n_show: nShow,
+  })
   return data
 }
 
-export async function analyzeTwitter(profileUrl: string): Promise<PlatformResult> {
-  const { data } = await api.post('/platforms/twitter', { profile_url: profileUrl })
+export async function analyzeTwitter(profileUrl: string, minRisk = 0, nShow = 20): Promise<PlatformResult> {
+  const { data } = await api.post('/platforms/twitter', {
+    profile_url: profileUrl,
+    min_risk: minRisk,
+    n_show: nShow,
+  })
   return data
 }
 

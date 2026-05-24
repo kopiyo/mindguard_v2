@@ -11,7 +11,9 @@ import type { PlatformResult } from '../types'
 export default function FileUploadPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [minRisk, setMinRisk] = useState(0)
+  const [nShow, setNShow] = useState(30)
   const [fileName, setFileName] = useState('')
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [error, setError] = useState('')
   const [activeTab, setActiveTab] = useState<'timeline' | 'posts' | 'socio'>('timeline')
   const { file, loading, setPlatformResult } = usePlatformStore()
@@ -20,7 +22,7 @@ export default function FileUploadPage() {
     const f = e.target.files?.[0]
     if (f) {
       setFileName(f.name)
-      handleAnalyze(f)
+      setSelectedFile(f)
     }
   }
 
@@ -28,7 +30,7 @@ export default function FileUploadPage() {
     setError('')
     try {
       usePlatformStore.getState().setLoading(true)
-      const result = await analyzeFile(file, minRisk, 20)
+      const result = await analyzeFile(file, minRisk, nShow)
       setPlatformResult('file', result)
     } catch (err: any) {
       setError(err.message || 'File analysis failed')
@@ -78,6 +80,26 @@ export default function FileUploadPage() {
             />
             <span className="text-[0.68rem] text-[#6b7280] font-semibold min-w-[32px]">{(minRisk * 100).toFixed(0)}%</span>
           </div>
+          <div className="text-[0.62rem] font-bold text-[#374151] uppercase tracking-[0.06em] mb-[4px] mt-[8px]">Max entries to display</div>
+          <div className="flex items-center gap-[8px] mb-[10px]">
+            <input
+              type="range"
+              min={5}
+              max={100}
+              step={5}
+              value={nShow}
+              onChange={(e) => setNShow(Number(e.target.value))}
+              className="flex-1 h-[3px]"
+            />
+            <span className="text-[0.68rem] text-[#6b7280] font-semibold min-w-[32px]">{nShow}</span>
+          </div>
+          <button
+            onClick={() => selectedFile && handleAnalyze(selectedFile)}
+            disabled={!selectedFile || loading}
+            className="w-full bg-gradient-to-r from-[#0F766E] to-[#1D9E75] text-white border-none rounded-[7px] py-[7px] text-[0.72rem] font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Analyse File
+          </button>
         </div>
 
         <div className="bg-white rounded-xl border border-[rgba(229,231,235,0.7)] overflow-hidden">

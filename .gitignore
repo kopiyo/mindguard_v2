@@ -40,6 +40,7 @@ env/
 
 # Checkpoints & dev artifacts
 checkpoints/
+.cache/
 
 # Local database — contains user data, never commit
 *.db

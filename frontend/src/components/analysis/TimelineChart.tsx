@@ -1,4 +1,4 @@
-import Plot from 'react-plotly.js'
+import Plot from '../../lib/plotly'
 import type { PostData } from '../../types'
 
 interface TimelineChartProps {
@@ -9,8 +9,14 @@ interface TimelineChartProps {
 
 export default function TimelineChart({ posts, dateCol = 'date', scoreCol = 'risk_score' }: TimelineChartProps) {
   const parsed = posts
-    .map((p) => ({ ...p, parsedDate: new Date(p[dateCol as keyof PostData] as string) }))
-    .filter((p) => !isNaN(p.parsedDate.getTime()))
+    .map((p, index) => ({
+      ...p,
+      originalIndex: index + 1,
+      parsedDate: toDateOnly(p[dateCol as keyof PostData] as string),
+      score: Number(p[scoreCol as keyof PostData]),
+    }))
+    .filter((p) => !isNaN(p.parsedDate.getTime()) && Number.isFinite(p.score))
+    .sort((a, b) => a.parsedDate.getTime() - b.parsedDate.getTime())
 
   if (parsed.length === 0) {
     return (
@@ -21,65 +27,91 @@ export default function TimelineChart({ posts, dateCol = 'date', scoreCol = 'ris
     )
   }
 
-  const weeklyMap = new Map<string, { scores: number[] }>()
-  parsed.forEach((p) => {
-    const d = p.parsedDate
-    const weekStart = new Date(d)
-    weekStart.setDate(d.getDate() - d.getDay())
-    const key = weekStart.toISOString().slice(0, 10)
-    if (!weeklyMap.has(key)) weeklyMap.set(key, { scores: [] })
-    weeklyMap.get(key)!.scores.push(p[scoreCol as keyof PostData] as number)
+  const points = parsed.map((post) => {
+    const date = new Date(post.parsedDate)
+
+    return {
+      date,
+      score: post.score,
+      originalDate: post.parsedDate,
+      postNumber: post.originalIndex,
+    }
   })
 
-  const weeks = Array.from(weeklyMap.entries()).sort(([a], [b]) => a.localeCompare(b))
+  const xValues = points.map((p) => p.date)
+  const yValues = points.map((p) => p.score)
+  const uniqueDateCount = new Set(xValues.map((date) => date.getTime())).size
+  const colors = points.map((p) => {
+    if (p.score >= 0.75) return '#ef4444'
+    if (p.score >= 0.55) return '#f97316'
+    if (p.score >= 0.35) return '#f59e0b'
+    return '#0F766E'
+  })
+  const hoverData = points.map((p) => [
+    p.originalDate.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    }),
+    p.postNumber,
+  ])
 
   return (
     <Plot
       data={[
         {
-          x: weeks.map(([w]) => w),
-          y: weeks.map(([, v]) => v.scores.reduce((a, b) => a + b, 0) / v.scores.length),
+          x: xValues,
+          y: yValues,
+          customdata: hoverData,
           type: 'scatter',
-          mode: 'lines+markers',
-          name: 'Weekly avg risk',
+          mode: points.length > 2 ? 'lines+markers' : 'markers',
+          name: 'Post risk',
           line: { color: '#0F766E', width: 2 },
-          marker: { color: '#0F766E', size: 5 },
-        },
-        {
-          type: 'bar',
-          x: weeks.map(([w]) => w),
-          y: weeks.map(([, v]) => v.scores.length),
-          name: 'Post count',
-          yaxis: 'y2',
-          marker: { color: 'rgba(15,118,110,0.12)' },
+          marker: {
+            color: colors,
+            size: 10,
+            opacity: 0.88,
+            line: { color: '#ffffff', width: 1.5 },
+          },
+          hovertemplate: 'Post %{customdata[1]}<br>Date: %{customdata[0]}<br>Risk: %{y:.1%}<extra></extra>',
         },
       ]}
       layout={{
         paper_bgcolor: 'rgba(0,0,0,0)',
         plot_bgcolor: '#ffffff',
         font: { color: '#4b5563', size: 10 },
-        xaxis: { title: '', gridcolor: '#f1f5f9', color: '#9ca3af' },
+        xaxis: {
+          title: 'Post Date',
+          gridcolor: '#f1f5f9',
+          color: '#9ca3af',
+          tickformat: '%b %d, %Y',
+          type: 'date',
+          range: uniqueDateCount === 1
+            ? [
+                new Date(xValues[0].getTime() - 12 * 60 * 60 * 1000),
+                new Date(xValues[0].getTime() + 12 * 60 * 60 * 1000),
+              ]
+            : undefined,
+        },
         yaxis: { title: 'Risk Score', range: [0, 1], tickformat: '.0%', gridcolor: '#f1f5f9', color: '#9ca3af' },
-        yaxis2: { title: 'Posts', overlaying: 'y', side: 'right', showgrid: false, color: '#9ca3af' },
-        margin: { l: 40, r: 40, t: 10, b: 30 },
+        margin: { l: 44, r: 20, t: 10, b: 42 },
         height: 200,
-        showlegend: true,
-        legend: { orientation: 'h', y: 1.1, font: { size: 9 } },
+        showlegend: false,
         shapes: [
           { type: 'rect', xref: 'paper', yref: 'y', x0: 0, x1: 1, y0: 0, y1: 0.35, fillcolor: 'rgba(34,197,94,0.05)', line: { width: 0 }, layer: 'below' },
           { type: 'rect', xref: 'paper', yref: 'y', x0: 0, x1: 1, y0: 0.35, y1: 0.55, fillcolor: 'rgba(245,158,11,0.05)', line: { width: 0 }, layer: 'below' },
           { type: 'rect', xref: 'paper', yref: 'y', x0: 0, x1: 1, y0: 0.55, y1: 0.75, fillcolor: 'rgba(249,115,22,0.05)', line: { width: 0 }, layer: 'below' },
           { type: 'rect', xref: 'paper', yref: 'y', x0: 0, x1: 1, y0: 0.75, y1: 1, fillcolor: 'rgba(239,68,68,0.05)', line: { width: 0 }, layer: 'below' },
         ],
-        annotations: [
-          { x: 1, y: 0.175, xref: 'paper', yref: 'y', text: 'Low', showarrow: false, font: { size: 8, color: '#22c55e' } },
-          { x: 1, y: 0.45, xref: 'paper', yref: 'y', text: 'Moderate', showarrow: false, font: { size: 8, color: '#f59e0b' } },
-          { x: 1, y: 0.65, xref: 'paper', yref: 'y', text: 'High', showarrow: false, font: { size: 8, color: '#f97316' } },
-          { x: 1, y: 0.875, xref: 'paper', yref: 'y', text: 'Critical', showarrow: false, font: { size: 8, color: '#ef4444' } },
-        ],
       }}
       config={{ displayModeBar: false, responsive: true }}
       className="w-full"
     />
   )
+}
+
+function toDateOnly(value: string) {
+  const date = new Date(value)
+  date.setHours(0, 0, 0, 0)
+  return date
 }

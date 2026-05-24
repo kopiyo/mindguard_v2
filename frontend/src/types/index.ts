@@ -39,6 +39,7 @@ export interface PlatformResult {
   min_risk: number
   n_show: number
   platform_key?: string
+  handle?: string
 }
 
 export interface PostData {
@@ -46,6 +47,11 @@ export interface PostData {
   date: string
   url?: string
   risk_score: number
+  raw_risk_score?: number
+  low_context?: boolean
+  adjustment_reason?: string
+  word_count?: number
+  char_count?: number
   subreddit?: string
   type?: string
 }
@@ -55,6 +61,9 @@ export interface VideoResult {
   risk: number
   transcription?: string
   label?: string
+  latency_ms?: number
+  video_url?: string
+  signals?: Record<string, SocioeconomicSignal[]>
 }
 
 export interface UserInfo {

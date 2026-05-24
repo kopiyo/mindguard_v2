@@ -7,13 +7,19 @@ import re
 import secrets
 import string
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode, urlparse
+import urllib.error
+import urllib.request
+import xml.etree.ElementTree as ET
 
 import numpy as np
+import httpx
 from pathlib import Path
 
 from fastapi import FastAPI, Header, Request, UploadFile, File, HTTPException, Depends
@@ -29,7 +35,7 @@ from backend.models.schemas import (
     MuteGroupRequest, NOTIFICATION_TYPES,
 )
 from backend.services.predictor import predict_one, predict_batch, keep_space_warm
-from backend.utils import clean_text, risk_label, detect_socioeconomic, RESOURCES, US_STATE_RESOURCES, TEAM_MEMBERS
+from backend.utils import clean_text, risk_label, detect_socioeconomic, calibrate_risk_score, RESOURCES, US_STATE_RESOURCES, TEAM_MEMBERS
 from backend.database import (
     init_db, seed_defaults,
     get_user_by_email, get_user_by_id, create_user,
@@ -282,9 +288,8 @@ async def google_auth(data: dict, request: Request):
 
 @app.post("/api/analysis/text")
 async def analyze_text(req: TextAnalysisRequest, user: dict = Depends(require_auth)):
-    cleaned = clean_text(req.text)
     try:
-        prob, ms = await predict_one(cleaned)
+        prob, ms = await predict_one(req.text)
     except Exception as exc:
         logger.error("ML inference error: %s", exc)
         raise HTTPException(503, "Analysis service temporarily unavailable. Please try again in a moment.")
@@ -313,9 +318,8 @@ async def analyze_image(file: UploadFile = File(...), user: dict = Depends(requi
         if not text:
             raise HTTPException(400, "No text could be extracted from the image")
 
-        cleaned = clean_text(text)
         try:
-            prob, ms = await predict_one(cleaned)
+            prob, ms = await predict_one(text)
         except Exception as exc:
             logger.error("ML inference error: %s", exc)
             raise HTTPException(503, "Analysis service temporarily unavailable. Please try again in a moment.")
@@ -338,7 +342,7 @@ async def analyze_image(file: UploadFile = File(...), user: dict = Depends(requi
 def _build_platform_result(posts: list, platform_key: str) -> dict:
     scores = np.array([p["risk_score"] for p in posts])
     df = [
-        {k: p.get(k) for k in ["text", "date", "url", "risk_score", "subreddit", "type"]}
+        {k: p.get(k) for k in ["text", "date", "url", "risk_score", "raw_risk_score", "low_context", "adjustment_reason", "word_count", "char_count", "subreddit", "type"]}
         for p in posts
     ]
     return {
@@ -351,22 +355,271 @@ def _build_platform_result(posts: list, platform_key: str) -> dict:
     }
 
 
+def _run_scraper_worker(platform: str, url: str, months: int = 3) -> list:
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise HTTPException(400, "Enter a valid profile URL")
+    _validate_external_host(parsed.hostname)
+
+    worker = Path(__file__).resolve().parent.parent / "scraper_worker.py"
+    if not worker.exists():
+        raise HTTPException(500, "Scraper worker is missing")
+
+    try:
+        result = subprocess.run(
+            [sys.executable, str(worker), platform, url, str(months)],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(408, "Scraping timed out. Try again or use File Upload with an archive.")
+
+    if result.returncode != 0:
+        err = result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "Scraper failed"
+        raise HTTPException(400, err)
+
+    try:
+        data = json.loads(result.stdout.strip())
+    except json.JSONDecodeError:
+        logger.error("Could not parse scraper output: %s", result.stdout[:500])
+        raise HTTPException(500, "Could not parse scraper output")
+
+    if not data.get("ok"):
+        raise HTTPException(400, data.get("error") or "Scraper failed")
+
+    posts = []
+    for p in data.get("posts", []):
+        text = (p.get("text") or "").strip()
+        if not text:
+            continue
+        try:
+            date = datetime.fromisoformat(str(p.get("date", "")).replace("Z", "+00:00"))
+        except ValueError:
+            date = datetime.now(timezone.utc)
+        if date.tzinfo is None:
+            date = date.replace(tzinfo=timezone.utc)
+        posts.append({
+            "text": text,
+            "date": date.isoformat(),
+            "url": p.get("url") or ("" if platform in {"facebook", "twitter"} else url),
+        })
+    return posts
+
+
+def _login_bluesky(identifier: str, password: str) -> str:
+    url = "https://bsky.social/xrpc/com.atproto.server.createSession"
+    payload = json.dumps({"identifier": identifier, "password": password}).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"Content-Type": "application/json", "User-Agent": "MindGuard/3.0"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode("utf-8"))["accessJwt"]
+    except urllib.error.HTTPError as exc:
+        if exc.code in (400, 401):
+            raise HTTPException(401, f"Login failed for Bluesky handle '{identifier}'.")
+        raise HTTPException(exc.code, f"Bluesky login failed with HTTP {exc.code}.")
+    except Exception as exc:
+        raise HTTPException(502, f"Could not reach Bluesky login API: {exc}")
+
+
+def _fetch_bluesky_posts(handle: str, access_token: str) -> list[dict]:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+    headers = {"User-Agent": "MindGuard/3.0", "Authorization": f"Bearer {access_token}"}
+    resolve_url = "https://bsky.social/xrpc/com.atproto.identity.resolveHandle?" + urlencode({"handle": handle})
+    try:
+        req = urllib.request.Request(resolve_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            did = json.loads(resp.read().decode("utf-8"))["did"]
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise HTTPException(404, f"Handle not found: {handle}.")
+        raise HTTPException(exc.code, f"Could not resolve Bluesky handle (HTTP {exc.code}).")
+    except Exception as exc:
+        raise HTTPException(502, f"Could not reach Bluesky API: {exc}")
+
+    posts: list[dict] = []
+    cursor = None
+
+    def public_bluesky_url_available(post_url: str) -> bool:
+        try:
+            parsed = urlparse(post_url)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                return False
+            _validate_external_host(parsed.hostname)
+            req = urllib.request.Request(post_url, headers={"User-Agent": "MindGuard/3.0"})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                html = resp.read(300_000).decode("utf-8", errors="ignore").lower()
+                return resp.status < 400 and "post not found" not in html
+        except Exception:
+            return False
+
+    for _ in range(10):
+        params = {"actor": did, "limit": 100}
+        if cursor:
+            params["cursor"] = cursor
+        feed_url = "https://bsky.social/xrpc/app.bsky.feed.getAuthorFeed?" + urlencode(params)
+        try:
+            req = urllib.request.Request(feed_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            raise HTTPException(exc.code, f"Could not fetch Bluesky posts (HTTP {exc.code}).")
+        except Exception as exc:
+            raise HTTPException(502, f"Could not fetch Bluesky posts: {exc}")
+
+        feed = data.get("feed", [])
+        if not feed:
+            break
+        oldest_in_page = None
+        for item in feed:
+            post = item.get("post", {})
+            record = post.get("record", {})
+            created_at = record.get("createdAt", "")
+            try:
+                created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            oldest_in_page = created
+            if created < cutoff:
+                continue
+            text = (record.get("text") or "").strip()
+            if len(text) <= 5:
+                continue
+            uri = post.get("uri", "")
+            rkey = uri.split("/")[-1] if uri else ""
+            post_url = f"https://bsky.app/profile/{handle}/post/{rkey}"
+            if not public_bluesky_url_available(post_url):
+                continue
+            posts.append({
+                "text": text,
+                "date": created.isoformat(),
+                "url": post_url,
+            })
+        cursor = data.get("cursor")
+        if not cursor:
+            break
+        if oldest_in_page and oldest_in_page < cutoff:
+            break
+    posts.sort(key=lambda p: p["date"])
+    return posts
+
+
 # Per-user platform results to prevent cross-user data leakage.
 _platform_results: dict[str, dict] = defaultdict(dict)
 
 
+def _fetch_reddit_rss_posts(username: str) -> list[dict]:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=182)
+    safe_username = username.strip().lstrip("u/")
+    if not re.match(r"^[A-Za-z0-9_-]{3,20}$", safe_username):
+        raise HTTPException(400, "Enter a valid Reddit username.")
+
+    feeds = [
+        ("Post", f"https://www.reddit.com/user/{safe_username}/submitted/.rss"),
+        ("Comment", f"https://www.reddit.com/user/{safe_username}/comments/.rss"),
+    ]
+    namespaces = {
+        "atom": "http://www.w3.org/2005/Atom",
+        "media": "http://search.yahoo.com/mrss/",
+    }
+    raw_posts: list[dict] = []
+    seen_urls = set()
+
+    for source_type, feed_url in feeds:
+        try:
+            req = urllib.request.Request(
+                feed_url,
+                headers={"User-Agent": "MindGuard/1.0 RSS research prototype"},
+            )
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                xml_text = resp.read().decode("utf-8", errors="ignore")
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                continue
+            raise HTTPException(exc.code, f"Could not fetch Reddit RSS feed (HTTP {exc.code}).")
+        except Exception as exc:
+            raise HTTPException(502, f"Could not fetch Reddit RSS feed: {exc}")
+
+        try:
+            root = ET.fromstring(xml_text)
+        except ET.ParseError:
+            continue
+
+        for entry in root.findall("atom:entry", namespaces):
+            title = (entry.findtext("atom:title", default="", namespaces=namespaces) or "").strip()
+            content = (entry.findtext("atom:content", default="", namespaces=namespaces) or "").strip()
+            content = re.sub(r"<[^>]+>", " ", content)
+            content = re.sub(r"\s+", " ", content).strip()
+            published = entry.findtext("atom:published", default="", namespaces=namespaces) or ""
+            updated = entry.findtext("atom:updated", default="", namespaces=namespaces) or ""
+            date_text = published or updated
+            try:
+                created = datetime.fromisoformat(date_text.replace("Z", "+00:00"))
+            except ValueError:
+                created = datetime.now(timezone.utc)
+            if created < cutoff:
+                continue
+
+            link = ""
+            for link_el in entry.findall("atom:link", namespaces):
+                href = link_el.attrib.get("href", "")
+                if href and "reddit.com" in href:
+                    link = href
+                    break
+            if not link or link in seen_urls:
+                continue
+            seen_urls.add(link)
+
+            text = f"{title} {content}".strip() if source_type == "Post" else content or title
+            text = re.sub(r"\s+", " ", text).strip()
+            if len(text) <= 10 or text.lower() in {"[deleted]", "[removed]"}:
+                continue
+
+            subreddit_match = re.search(r"/r/([^/]+)/", link)
+            raw_posts.append({
+                "text": text,
+                "date": created.isoformat(),
+                "url": link,
+                "subreddit": subreddit_match.group(1) if subreddit_match else "",
+                "type": source_type,
+            })
+
+    raw_posts.sort(key=lambda p: p["date"])
+    return raw_posts
+
+
 @app.post("/api/platforms/reddit")
 async def analyze_reddit(req: PlatformRequest, user: dict = Depends(require_auth)):
-    client_id = os.getenv("REDDIT_CLIENT_ID", "")
-    client_secret = os.getenv("REDDIT_CLIENT_SECRET", "")
-    if not client_id or not client_secret:
-        raise HTTPException(400,
-            "Reddit API not configured. Set REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET environment variables.")
-
+    client_id = req.client_id or os.getenv("REDDIT_CLIENT_ID", "")
+    client_secret = req.client_secret or os.getenv("REDDIT_CLIENT_SECRET", "")
     if not req.username.strip():
         raise HTTPException(400, "Reddit username is required.")
 
     try:
+        username = req.username.strip().lstrip("u/")
+        if not client_id or not client_secret:
+            raw_posts = _fetch_reddit_rss_posts(username)
+            if not raw_posts:
+                raise HTTPException(404, f"No RSS posts found for u/{username} in the last 6 months.")
+
+            text_col = [clean_text(p["text"]) for p in raw_posts]
+            scores = await predict_batch(text_col)
+            for i, p in enumerate(raw_posts):
+                p.update(calibrate_risk_score(p["text"], float(scores[i])))
+
+            result = _build_platform_result(raw_posts, "reddit")
+            result["min_risk"] = req.min_risk
+            result["n_show"] = req.n_show
+            result["username"] = username
+            result["mode"] = "rss"
+            _platform_results[user["id"]]["reddit"] = result
+            return result
+
         import praw
         import prawcore
         reddit = praw.Reddit(
@@ -374,35 +627,52 @@ async def analyze_reddit(req: PlatformRequest, user: dict = Depends(require_auth
             client_secret=client_secret,
             user_agent="MindGuard/1.0",
         )
-        redditor = reddit.redditor(req.username)
+        redditor = reddit.redditor(username)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=182)
 
         raw_posts = []
         for submission in redditor.submissions.new(limit=200):
+            created = datetime.fromtimestamp(submission.created_utc, tz=timezone.utc)
+            if created < cutoff:
+                break
+            text = f"{submission.title} {submission.selftext or ''}".strip()
+            if len(text) <= 10:
+                continue
             raw_posts.append({
-                "text": submission.title + " " + (submission.selftext or ""),
-                "date": datetime.fromtimestamp(submission.created_utc, tz=timezone.utc).isoformat(),
+                "text": text,
+                "date": created.isoformat(),
                 "url": f"https://reddit.com{submission.permalink}",
                 "subreddit": submission.subreddit.display_name,
-                "type": "submission",
+                "type": "post",
             })
         for comment in redditor.comments.new(limit=500):
+            created = datetime.fromtimestamp(comment.created_utc, tz=timezone.utc)
+            if created < cutoff:
+                break
+            text = (comment.body or "").strip()
+            if len(text) <= 10 or text in ("[deleted]", "[removed]"):
+                continue
             raw_posts.append({
-                "text": comment.body,
-                "date": datetime.fromtimestamp(comment.created_utc, tz=timezone.utc).isoformat(),
+                "text": text,
+                "date": created.isoformat(),
                 "url": f"https://reddit.com{comment.permalink}",
                 "subreddit": comment.subreddit.display_name,
                 "type": "comment",
             })
+        raw_posts.sort(key=lambda p: p["date"])
+
+        if not raw_posts:
+            raise HTTPException(404, f"No posts found for u/{username} in the last 6 months.")
 
         text_col = [clean_text(p["text"]) for p in raw_posts]
         scores = await predict_batch(text_col)
         for i, p in enumerate(raw_posts):
-            p["risk_score"] = float(scores[i])
+            p.update(calibrate_risk_score(p["text"], float(scores[i])))
 
         result = _build_platform_result(raw_posts, "reddit")
         result["min_risk"] = req.min_risk
         result["n_show"] = req.n_show
-        result["username"] = req.username
+        result["username"] = username
         _platform_results[user["id"]]["reddit"] = result
         return result
 
@@ -424,84 +694,94 @@ async def analyze_reddit(req: PlatformRequest, user: dict = Depends(require_auth
 
 @app.post("/api/platforms/bluesky")
 async def analyze_bluesky(req: PlatformRequest, user: dict = Depends(require_auth)):
-    if not req.handle or not req.password:
-        raise HTTPException(400, "Handle and password required")
+    target_handle = req.handle.strip().lstrip("@")
+    login_handle = (req.identifier or req.handle).strip().lstrip("@")
+    if target_handle and "." not in target_handle:
+        target_handle = f"{target_handle}.bsky.social"
+    if login_handle and "." not in login_handle:
+        login_handle = f"{login_handle}.bsky.social"
+    if not target_handle:
+        raise HTTPException(400, "Enter the Bluesky handle you want to analyse.")
+    if not login_handle or not req.password:
+        raise HTTPException(400, "Enter your Bluesky handle and App Password.")
     try:
-        from atproto import Client
-        client = Client()
-        client.login(req.handle, req.password)
-        did = client.me.did
+        access_token = await asyncio.to_thread(_login_bluesky, login_handle, req.password)
+        raw_posts = await asyncio.to_thread(_fetch_bluesky_posts, target_handle, access_token)
 
-        raw_posts = []
-        cursor = None
-        for _ in range(5):
-            feed = client.app.bsky.feed.get_author_feed({
-                "actor": did,
-                "cursor": cursor,
-                "limit": 100,
-            })
-            for item in feed.feed:
-                post = item.post
-                try:
-                    created = datetime.fromisoformat(post.created_at.replace("Z", "+00:00"))
-                except (ValueError, AttributeError):
-                    created = datetime.now(timezone.utc)
-                if (datetime.now(timezone.utc) - created).days > 90:
-                    continue
-                raw_posts.append({
-                    "text": post.record.text,
-                    "date": post.created_at,
-                    "url": f"https://bsky.app/profile/{req.handle}/post/{post.uri.split('/')[-1]}",
-                })
-            if not feed.cursor:
-                break
-            cursor = feed.cursor
+        if not raw_posts:
+            raise HTTPException(404, f"No posts found for '{target_handle}' in the last 3 months.")
 
         texts = [clean_text(p["text"]) for p in raw_posts]
         scores = await predict_batch(texts)
         for i, p in enumerate(raw_posts):
-            p["risk_score"] = float(scores[i])
+            p.update(calibrate_risk_score(p["text"], float(scores[i])))
 
         result = _build_platform_result(raw_posts, "bluesky")
         result["min_risk"] = req.min_risk
         result["n_show"] = req.n_show
-        result["handle"] = req.handle
+        result["handle"] = target_handle
         _platform_results[user["id"]]["bluesky"] = result
         return result
 
-    except ImportError:
-        raise HTTPException(501, "atproto not installed")
     except HTTPException:
         raise
     except Exception as e:
         logger.error("Bluesky analysis error: %s", e)
-        raise HTTPException(400, "Bluesky analysis failed")
+        raise HTTPException(400, f"Bluesky analysis failed: {e}")
 
 
 @app.post("/api/platforms/mastodon")
 async def analyze_mastodon(req: PlatformRequest, user: dict = Depends(require_auth)):
     if not req.handle:
         raise HTTPException(400, "Handle required")
-    _validate_external_host(req.instance)
+    handle_input = req.handle.strip().lstrip("@")
+    if "@" not in handle_input:
+        raise HTTPException(400, "Mastodon handle must be in format: username@instance.social")
+    parts = handle_input.split("@")
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        raise HTTPException(400, "Mastodon handle must be in format: username@instance.social")
+    username, instance = parts
+    _validate_external_host(instance)
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=15.0) as client:
             r = await client.get(
-                f"https://{req.instance}/api/v1/accounts/lookup",
-                params={"acct": req.handle},
+                f"https://{instance}/api/v1/accounts/lookup",
+                params={"acct": username},
             )
+            if r.status_code == 404:
+                raise HTTPException(404, f"Could not find Mastodon account: {username}@{instance}")
             r.raise_for_status()
             acct = r.json()
 
             raw_posts = []
             max_id = None
-            for _ in range(4):
+            cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+
+            async def public_status_url_available(status_url: str) -> bool:
+                if not status_url:
+                    return False
+                parsed_url = urlparse(status_url)
+                if parsed_url.scheme not in {"http", "https"} or not parsed_url.hostname:
+                    return False
+                _validate_external_host(parsed_url.hostname)
+                try:
+                    check = await client.head(status_url, follow_redirects=True, timeout=8.0)
+                    if check.status_code in {405, 501}:
+                        check = await client.get(status_url, follow_redirects=True, timeout=8.0)
+                    return 200 <= check.status_code < 400
+                except Exception:
+                    return False
+
+            for _ in range(10):
                 params: dict = {"limit": 40, "exclude_replies": False}
                 if max_id:
                     params["max_id"] = max_id
                 r = await client.get(
-                    f"https://{req.instance}/api/v1/accounts/{acct['id']}/statuses",
+                    f"https://{instance}/api/v1/accounts/{acct['id']}/statuses",
                     params=params,
                 )
+                if r.status_code in {401, 403, 404}:
+                    raise HTTPException(r.status_code, "Could not fetch Mastodon posts. The account may be private, restricted, or unavailable.")
                 r.raise_for_status()
                 statuses = r.json()
                 if not statuses:
@@ -512,109 +792,276 @@ async def analyze_mastodon(req: PlatformRequest, user: dict = Depends(require_au
                         created = datetime.fromisoformat(s["created_at"].replace("Z", "+00:00"))
                     except (ValueError, KeyError):
                         created = datetime.now(timezone.utc)
-                    if (datetime.now(timezone.utc) - created).days > 90:
+                    if created < cutoff:
+                        break
+                    text = re.sub(r"<[^>]+>", "", s.get("content", "")).strip()
+                    if len(text) <= 5:
+                        continue
+                    status_url = s.get("url", "")
+                    if not await public_status_url_available(status_url):
                         continue
                     raw_posts.append({
-                        "text": re.sub(r"<[^>]+>", "", s.get("content", "")),
+                        "text": text,
                         "date": s.get("created_at", ""),
-                        "url": s.get("url", ""),
+                        "url": status_url,
                     })
                 max_id = statuses[-1]["id"]
+                if raw_posts and datetime.fromisoformat(str(raw_posts[-1]["date"]).replace("Z", "+00:00")) < cutoff:
+                    break
+
+        if not raw_posts:
+            raise HTTPException(404, "No posts found or account is private/not found.")
 
         texts = [clean_text(p["text"]) for p in raw_posts]
         scores = await predict_batch(texts)
         for i, p in enumerate(raw_posts):
-            p["risk_score"] = float(scores[i])
+            p.update(calibrate_risk_score(p["text"], float(scores[i])))
 
         result = _build_platform_result(raw_posts, "mastodon")
         result["min_risk"] = req.min_risk
         result["n_show"] = req.n_show
-        result["handle"] = req.handle
+        result["handle"] = f"{username}@{instance}"
         _platform_results[user["id"]]["mastodon"] = result
         return result
 
     except HTTPException:
         raise
+    except httpx.HTTPStatusError as e:
+        logger.error("Mastodon HTTP status error: %s", e)
+        raise HTTPException(400, f"Mastodon API returned an error: HTTP {e.response.status_code}")
+    except httpx.RequestError as e:
+        logger.error("Mastodon network error: %s", e)
+        raise HTTPException(400, f"Could not reach Mastodon API: {e}")
     except Exception as e:
         logger.error("Mastodon analysis error: %s", e)
-        raise HTTPException(400, "Mastodon analysis failed")
+        raise HTTPException(400, f"Mastodon analysis failed: {e}")
+
+
+def _download_and_transcribe_video(video_url: str, max_seconds: int = 600) -> tuple[str, str]:
+    import yt_dlp
+    from faster_whisper import WhisperModel
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ydl_opts = {
+            "format": "bestaudio/best",
+            "outtmpl": os.path.join(tmpdir, "audio.%(ext)s"),
+            "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}],
+            "quiet": True,
+            "noplaylist": True,
+            "socket_timeout": 90,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([video_url])
+
+        audio_file = next(
+            (os.path.join(tmpdir, f) for f in os.listdir(tmpdir) if f.endswith(".mp3")),
+            None,
+        )
+        if not audio_file:
+            raise RuntimeError("Could not download audio")
+
+        trimmed = os.path.join(tmpdir, "trimmed.mp3")
+        proc = subprocess.run(
+            ["ffmpeg", "-i", audio_file, "-t", str(max_seconds), "-y", trimmed],
+            capture_output=True,
+            timeout=max(180, max_seconds // 2),
+        )
+        if proc.returncode != 0 and not os.path.exists(trimmed):
+            raise RuntimeError("Audio trimming failed")
+
+        target = trimmed if os.path.exists(trimmed) else audio_file
+        whisper = WhisperModel("tiny", device="cpu", compute_type="int8")
+        segments, _ = whisper.transcribe(target)
+        transcript = " ".join(seg.text.strip() for seg in segments).strip()
+        return transcript, target
 
 
 @app.post("/api/platforms/youtube")
 async def analyze_youtube(req: PlatformRequest, user: dict = Depends(require_auth)):
-    if not req.channel_url or not req.api_key:
-        raise HTTPException(400, "Channel URL and API key required")
+    if not req.channel_url:
+        raise HTTPException(400, "YouTube channel or video URL required")
     try:
-        api_key = req.api_key
+        api_key = req.api_key.strip()
         channel_id = None
+        channel_input = req.channel_url.strip()
+        lowered_input = channel_input.lower()
+
+        is_video_url = (
+            "youtube.com/watch" in lowered_input
+            or "youtu.be/" in lowered_input
+            or "youtube.com/shorts/" in lowered_input
+            or "youtube.com/live/" in lowered_input
+        )
+
+        if is_video_url:
+            transcript, _ = await asyncio.to_thread(_download_and_transcribe_video, channel_input, 600)
+            if not transcript.strip():
+                raise HTTPException(422, "No speech transcript was returned, so no prediction was made.")
+
+            prob, _ = await predict_one(transcript)
+            raw_posts = [{
+                "text": transcript,
+                "date": datetime.now(timezone.utc).isoformat(),
+                "url": channel_input,
+                "type": "Transcript",
+                **calibrate_risk_score(transcript, float(prob)),
+            }]
+
+            result = _build_platform_result(raw_posts, "youtube")
+            result["min_risk"] = req.min_risk
+            result["n_show"] = req.n_show
+            result["channel"] = channel_input
+            result["analysis_mode"] = "video_transcript"
+            _platform_results[user["id"]]["youtube"] = result
+            return result
+
+        if not api_key:
+            raise HTTPException(400, "YouTube API key required for channel analysis. Direct video URLs can be analysed without an API key.")
 
         async with httpx.AsyncClient(timeout=10.0) as client:
-            if "/channel/" in req.channel_url:
-                channel_id = req.channel_url.split("/channel/")[1].split("/")[0]
-            elif "/@" in req.channel_url:
-                handle = req.channel_url.split("/@")[1].split("/")[0]
+            if "youtube.com/channel/" in channel_input:
+                channel_id = channel_input.split("youtube.com/channel/")[-1].split("/")[0].split("?")[0]
+            elif "youtube.com/@" in channel_input:
+                handle = channel_input.split("youtube.com/@")[-1].split("/")[0].split("?")[0]
                 r = await client.get(
-                    "https://www.googleapis.com/youtube/v3/search",
-                    params={"part": "snippet", "q": handle, "type": "channel", "key": api_key},
+                    "https://www.googleapis.com/youtube/v3/channels",
+                    params={"part": "id", "forHandle": handle, "key": api_key},
                 )
                 r.raise_for_status()
                 items = r.json().get("items", [])
                 if items:
-                    channel_id = items[0]["snippet"]["channelId"]
-            elif "youtube.com" in req.channel_url:
+                    channel_id = items[0]["id"]
+            else:
+                handle = channel_input.lstrip("@")
                 r = await client.get(
-                    "https://www.googleapis.com/youtube/v3/search",
-                    params={"part": "snippet", "q": req.channel_url, "type": "channel", "key": api_key},
+                    "https://www.googleapis.com/youtube/v3/channels",
+                    params={"part": "id", "forHandle": handle, "key": api_key},
                 )
                 r.raise_for_status()
                 items = r.json().get("items", [])
                 if items:
-                    channel_id = items[0]["snippet"]["channelId"]
+                    channel_id = items[0]["id"]
 
             if not channel_id:
-                raise HTTPException(400, "Could not resolve channel ID")
+                raise HTTPException(400, "Could not resolve YouTube channel. Use a channel URL or @handle.")
 
             raw_posts = []
-            next_token = None
-            for _ in range(3):
-                params: dict = {
-                    "part": "snippet", "channelId": channel_id,
-                    "order": "date", "maxResults": 50, "key": api_key,
-                }
-                if next_token:
-                    params["pageToken"] = next_token
-                r = await client.get(
-                    "https://www.googleapis.com/youtube/v3/search", params=params
-                )
-                r.raise_for_status()
-                data = r.json()
-                for item in data.get("items", []):
-                    vid_id = item["id"].get("videoId")
-                    title = item["snippet"]["title"]
-                    desc = item["snippet"]["description"]
-                    published = item["snippet"]["publishedAt"]
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            r = await client.get(
+                "https://www.googleapis.com/youtube/v3/search",
+                params={
+                    "part": "id,snippet",
+                    "channelId": channel_id,
+                    "type": "video",
+                    "order": "date",
+                    "maxResults": 50,
+                    "publishedAfter": cutoff,
+                    "key": api_key,
+                },
+            )
+            r.raise_for_status()
+            for item in r.json().get("items", []):
+                vid_id = item["id"].get("videoId", "")
+                snippet = item.get("snippet", {})
+                title = snippet.get("title", "")
+                desc = snippet.get("description", "")
+                published = snippet.get("publishedAt", "")
+                text = f"{title} {desc}".strip()
+                if len(text) > 5:
                     raw_posts.append({
-                        "text": f"{title} {desc}",
+                        "text": text,
                         "date": published,
                         "url": f"https://youtube.com/watch?v={vid_id}" if vid_id else "",
+                        "type": "Title/Description",
+                        "video_id": vid_id,
                     })
-                next_token = data.get("nextPageToken")
-                if not next_token:
-                    break
+                if not vid_id:
+                    continue
+                try:
+                    cr = await client.get(
+                        "https://www.googleapis.com/youtube/v3/commentThreads",
+                        params={
+                            "part": "snippet",
+                            "videoId": vid_id,
+                            "maxResults": 20,
+                            "order": "relevance",
+                            "key": api_key,
+                        },
+                    )
+                    cr.raise_for_status()
+                    for c in cr.json().get("items", []):
+                        comment_text = c["snippet"]["topLevelComment"]["snippet"].get("textDisplay", "")
+                        comment_text = re.sub(r"<[^>]+>", "", comment_text).strip()
+                        if len(comment_text) > 5:
+                            raw_posts.append({
+                                "text": comment_text,
+                                "date": published,
+                                "url": f"https://youtube.com/watch?v={vid_id}",
+                                "type": "Comment",
+                                "video_id": vid_id,
+                            })
+                except Exception:
+                    pass
+
+            transcript_limit = min(req.transcript_limit, 3)
+            if req.transcribe_videos and transcript_limit > 0:
+                transcribed = 0
+                videos_to_transcribe = []
+                seen_video_ids = set()
+                for post in raw_posts:
+                    vid_id = post.get("video_id")
+                    if vid_id and vid_id not in seen_video_ids:
+                        seen_video_ids.add(vid_id)
+                        videos_to_transcribe.append({
+                            "video_id": vid_id,
+                            "date": post.get("date", ""),
+                            "url": post.get("url", ""),
+                        })
+                    if len(videos_to_transcribe) >= transcript_limit:
+                        break
+
+                for video in videos_to_transcribe:
+                    try:
+                        transcript, _ = await asyncio.to_thread(_download_and_transcribe_video, video["url"], 600)
+                    except Exception as exc:
+                        logger.warning("Could not transcribe YouTube video %s: %s", video["video_id"], exc)
+                        continue
+                    if len(transcript.strip()) > 5:
+                        raw_posts.append({
+                            "text": transcript.strip(),
+                            "date": video["date"],
+                            "url": video["url"],
+                            "type": "Transcript",
+                            "video_id": video["video_id"],
+                        })
+                        transcribed += 1
+
+        if not raw_posts:
+            raise HTTPException(404, "No content found in the last 3 months.")
+        raw_posts.sort(key=lambda p: p["date"])
 
         texts = [clean_text(p["text"]) for p in raw_posts]
         scores = await predict_batch(texts)
         for i, p in enumerate(raw_posts):
-            p["risk_score"] = float(scores[i])
+            p.update(calibrate_risk_score(p["text"], float(scores[i])))
 
         result = _build_platform_result(raw_posts, "youtube")
         result["min_risk"] = req.min_risk
         result["n_show"] = req.n_show
-        result["channel"] = req.channel_url
+        result["channel"] = channel_input
+        result["transcribed_videos"] = sum(1 for p in raw_posts if p.get("type") == "Transcript")
+        result["transcript_limit"] = min(req.transcript_limit, 3) if req.transcribe_videos else 0
+        _platform_results[user["id"]]["youtube"] = result
         return result
 
     except HTTPException:
         raise
+    except ImportError:
+        raise HTTPException(501, "Video processing dependencies not installed")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(408, "Video processing timed out")
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
     except Exception as e:
         logger.error("YouTube analysis error: %s", e)
         raise HTTPException(400, "YouTube analysis failed")
@@ -625,48 +1072,19 @@ async def analyze_video(req: PlatformRequest, user: dict = Depends(require_auth)
     if not req.video_url:
         raise HTTPException(400, "Video URL required")
     try:
-        import yt_dlp
-        from faster_whisper import WhisperModel
-
-        def _download_and_transcribe(video_url: str) -> tuple[str, str]:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                ydl_opts = {
-                    "format": "bestaudio/best",
-                    "outtmpl": os.path.join(tmpdir, "audio.%(ext)s"),
-                    "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}],
-                    "quiet": True,
-                }
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([video_url])
-
-                audio_file = next(
-                    (os.path.join(tmpdir, f) for f in os.listdir(tmpdir) if f.endswith(".mp3")),
-                    None,
-                )
-                if not audio_file:
-                    raise RuntimeError("Could not download audio")
-
-                trimmed = os.path.join(tmpdir, "trimmed.mp3")
-                proc = subprocess.run(
-                    ["ffmpeg", "-i", audio_file, "-t", "300", "-y", trimmed],
-                    capture_output=True, timeout=120,
-                )
-                if proc.returncode != 0 and not os.path.exists(trimmed):
-                    raise RuntimeError("Audio trimming failed")
-
-                target = trimmed if os.path.exists(trimmed) else audio_file
-                whisper = WhisperModel("tiny", device="cpu", compute_type="int8")
-                segments, _ = whisper.transcribe(target)
-                return " ".join(seg.text for seg in segments), target
-
-        transcript, _ = await asyncio.to_thread(_download_and_transcribe, req.video_url)
-        prob, ms = await predict_one(clean_text(transcript))
+        transcript, _ = await asyncio.to_thread(_download_and_transcribe_video, req.video_url, 600)
+        if not transcript.strip():
+            raise HTTPException(422, "No speech transcript was returned, so no prediction was made.")
+        prob, ms = await predict_one(transcript)
         label, color, level = risk_label(prob)
         result = {
             "ok": True,
             "risk": prob,
             "transcription": transcript,
             "label": label,
+            "latency_ms": ms,
+            "video_url": req.video_url,
+            "signals": detect_socioeconomic([{"text": transcript}]),
         }
         _platform_results[user["id"]]["video"] = result
         return result
@@ -686,12 +1104,69 @@ async def analyze_video(req: PlatformRequest, user: dict = Depends(require_auth)
 
 @app.post("/api/platforms/facebook")
 async def analyze_facebook(req: PlatformRequest, user: dict = Depends(require_auth)):
-    raise HTTPException(501, "Facebook analysis is not yet implemented")
+    if not req.profile_url:
+        raise HTTPException(400, "Facebook profile URL is required")
+    if "facebook.com" not in req.profile_url.lower():
+        raise HTTPException(400, "Enter a full Facebook URL, e.g. https://www.facebook.com/username")
+
+    try:
+        raw_posts = await asyncio.to_thread(_run_scraper_worker, "facebook", req.profile_url, req.months)
+        if not raw_posts:
+            raise HTTPException(404, "No public posts found. The profile may be private or Facebook blocked the request.")
+
+        texts = [clean_text(p["text"]) for p in raw_posts]
+        scores = await predict_batch(texts)
+        for i, p in enumerate(raw_posts):
+            p.update(calibrate_risk_score(p["text"], float(scores[i])))
+
+        result = _build_platform_result(raw_posts, "facebook")
+        result["min_risk"] = req.min_risk
+        result["n_show"] = req.n_show
+        result["url"] = req.profile_url
+        _platform_results[user["id"]]["facebook"] = result
+        return result
+
+    except HTTPException:
+        raise
+    except ImportError:
+        raise HTTPException(501, "Playwright is not installed. Install with: pip install playwright")
+    except Exception as e:
+        logger.error("Facebook analysis error: %s", e)
+        raise HTTPException(400, f"Facebook analysis failed: {e}")
 
 
 @app.post("/api/platforms/twitter")
 async def analyze_twitter(req: PlatformRequest, user: dict = Depends(require_auth)):
-    raise HTTPException(501, "Twitter/X analysis is not yet implemented")
+    if not req.profile_url:
+        raise HTTPException(400, "Twitter/X profile URL is required")
+    lowered = req.profile_url.lower()
+    if "twitter.com" not in lowered and "x.com" not in lowered:
+        raise HTTPException(400, "Enter a valid Twitter/X URL, e.g. https://x.com/username")
+
+    try:
+        raw_posts = await asyncio.to_thread(_run_scraper_worker, "twitter", req.profile_url, 3)
+        if not raw_posts:
+            raise HTTPException(404, "No tweets found. The profile may be private or Twitter/X may require login.")
+
+        texts = [clean_text(p["text"]) for p in raw_posts]
+        scores = await predict_batch(texts)
+        for i, p in enumerate(raw_posts):
+            p.update(calibrate_risk_score(p["text"], float(scores[i])))
+
+        result = _build_platform_result(raw_posts, "twitter")
+        result["min_risk"] = req.min_risk
+        result["n_show"] = req.n_show
+        result["url"] = req.profile_url
+        _platform_results[user["id"]]["twitter"] = result
+        return result
+
+    except HTTPException:
+        raise
+    except ImportError:
+        raise HTTPException(501, "Playwright is not installed. Install with: pip install playwright")
+    except Exception as e:
+        logger.error("Twitter/X analysis error: %s", e)
+        raise HTTPException(400, f"Twitter/X analysis failed: {e}")
 
 
 @app.post("/api/platforms/file")
@@ -741,7 +1216,7 @@ async def analyze_file(
         texts = [clean_text(p["text"]) for p in raw_posts]
         scores = await predict_batch(texts)
         for i, p in enumerate(raw_posts):
-            p["risk_score"] = float(scores[i])
+            p.update(calibrate_risk_score(p["text"], float(scores[i])))
 
         result = _build_platform_result(raw_posts, "file")
         result["min_risk"] = min_risk

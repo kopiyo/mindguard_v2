@@ -10,6 +10,10 @@ SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
 
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 HF_REPO_ID = os.getenv("HF_REPO_ID", "kopiyodiana/mindguard-mental-roberta")
+HF_CACHE_DIR = os.getenv(
+    "HF_CACHE_DIR",
+    str(Path(__file__).resolve().parent.parent / ".cache" / "huggingface"),
+)
 
 BASE_MODEL = "roberta-base"
 MAX_LENGTH = 256

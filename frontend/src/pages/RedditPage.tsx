@@ -10,18 +10,28 @@ import type { PlatformResult } from '../types'
 
 export default function RedditPage() {
   const [username, setUsername] = useState('')
+  const [clientId, setClientId] = useState('')
+  const [clientSecret, setClientSecret] = useState('')
   const [minRisk, setMinRisk] = useState(0)
+  const [nShow, setNShow] = useState(20)
   const [error, setError] = useState('')
   const [activeTab, setActiveTab] = useState<'timeline' | 'posts' | 'socio'>('timeline')
   const { reddit, loading, setPlatformResult } = usePlatformStore()
+  const usingApiMode = Boolean(clientId.trim() || clientSecret.trim())
 
   const handleAnalyze = async () => {
     if (!username.trim()) return
+    if (usingApiMode && (!clientId.trim() || !clientSecret.trim())) {
+      setError('Enter both Reddit API fields, or leave both blank to use API-free RSS mode.')
+      return
+    }
     setError('')
     try {
       usePlatformStore.getState().setLoading(true)
-      const result = await analyzeReddit(username, minRisk, 20)
+      setPlatformResult('reddit', null)
+      const result = await analyzeReddit(username, clientId, clientSecret, minRisk, nShow)
       setPlatformResult('reddit', result)
+      setActiveTab('timeline')
     } catch (err: any) {
       setError(err.message || 'Reddit analysis failed')
     } finally {
@@ -51,6 +61,24 @@ export default function RedditPage() {
             placeholder="e.g. spez"
             className="w-full bg-[#fafbfc] border-[1.5px] border-[#e5e7eb] rounded-[8px] px-[12px] py-[9px] text-[0.82rem] text-[#4b5563] outline-none focus:border-[#0F766E] mb-[10px]"
           />
+          <div className="text-[0.7rem] font-bold text-[#374151] uppercase tracking-[0.06em] mb-[6px]">Reddit API credentials</div>
+          <p className="text-[0.7rem] text-[#6b7280] mb-[8px]">
+            Optional. Leave blank to use API-free Reddit RSS mode, or enter credentials for the richer API mode.
+          </p>
+          <input
+            type="text"
+            value={clientId}
+            onChange={(e) => setClientId(e.target.value)}
+            placeholder="Client ID"
+            className="w-full bg-[#fafbfc] border-[1.5px] border-[#e5e7eb] rounded-[8px] px-[12px] py-[9px] text-[0.82rem] text-[#4b5563] outline-none focus:border-[#0F766E] mb-[8px]"
+          />
+          <input
+            type="password"
+            value={clientSecret}
+            onChange={(e) => setClientSecret(e.target.value)}
+            placeholder="Client Secret"
+            className="w-full bg-[#fafbfc] border-[1.5px] border-[#e5e7eb] rounded-[8px] px-[12px] py-[9px] text-[0.82rem] text-[#4b5563] outline-none focus:border-[#0F766E] mb-[10px]"
+          />
           <div className="text-[0.7rem] font-bold text-[#374151] uppercase tracking-[0.06em] mb-[6px]">Min risk score</div>
           <div className="flex items-center gap-[8px] mb-[10px]">
             <input
@@ -63,6 +91,19 @@ export default function RedditPage() {
             />
             <span className="text-[0.78rem] text-[#6b7280] font-semibold min-w-[36px]">{(minRisk * 100).toFixed(0)}%</span>
           </div>
+          <div className="text-[0.7rem] font-bold text-[#374151] uppercase tracking-[0.06em] mb-[6px]">Max posts to display</div>
+          <div className="flex items-center gap-[8px] mb-[10px]">
+            <input
+              type="range"
+              min={5}
+              max={50}
+              step={5}
+              value={nShow}
+              onChange={(e) => setNShow(Number(e.target.value))}
+              className="flex-1 h-[4px]"
+            />
+            <span className="text-[0.78rem] text-[#6b7280] font-semibold min-w-[36px]">{nShow}</span>
+          </div>
           {error && (
             <div className="text-[0.72rem] text-[#dc2626] bg-[#fef2f2] rounded-[6px] px-[10px] py-[7px] mb-[8px] border border-[#fecaca]">
               {error}
@@ -70,11 +111,14 @@ export default function RedditPage() {
           )}
           <button
             onClick={handleAnalyze}
-            disabled={!username.trim() || loading}
+            disabled={!username.trim() || (usingApiMode && (!clientId.trim() || !clientSecret.trim())) || loading}
             className="w-full bg-gradient-to-r from-[#0F766E] to-[#1D9E75] text-white border-none rounded-[8px] py-[10px] text-[0.82rem] font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {loading ? 'Analysing...' : 'Analyse Reddit User'}
+            {loading ? 'Analysing...' : usingApiMode ? 'Analyse Reddit User with API' : 'Analyse Reddit User with RSS'}
           </button>
+          <p className="text-[0.68rem] text-[#6b7280] mt-[8px]">
+            RSS mode fetches recent public submitted posts and comments from Reddit feeds. It may return fewer items than API mode.
+          </p>
         </div>
 
         {/* Results column */}
@@ -96,7 +140,7 @@ export default function RedditPage() {
           </div>
           <div className="p-[16px_18px]">
             {loading ? (
-              <LoadingSpinner text="Fetching and analysing Reddit posts..." />
+              <LoadingSpinner text={usingApiMode ? 'Fetching and analysing Reddit posts with API...' : 'Fetching Reddit RSS feeds and analysing public posts/comments...'} />
             ) : !result ? (
               <div className="flex flex-col items-center justify-center h-[240px] text-[#c4c9d0] gap-[8px]">
                 <i className="ti ti-brand-reddit text-[28px]" />

@@ -61,3 +61,23 @@ input[type="range"]::-webkit-slider-thumb {
   border: 2px solid #fff;
   box-shadow: 0 1px 3px rgba(0,0,0,0.15);
 }
+
+.toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  border: 1px solid #d1d5db;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #4b5563;
+  padding: 0 10px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.toolbar-btn:hover {
+  border-color: #0F766E;
+  color: #0F766E;
+}

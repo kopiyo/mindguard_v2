@@ -1,5 +1,5 @@
 import type { SocioeconomicSignal } from '../../types'
-import Plot from 'react-plotly.js'
+import Plot from '../../lib/plotly'
 
 interface SocioEconomicPanelProps {
   signals: Record<string, SocioeconomicSignal[]>
@@ -27,32 +27,36 @@ export default function SocioEconomicPanel({ signals }: SocioEconomicPanelProps)
 
   return (
     <div className="space-y-[10px]">
-      {activeCategories.length > 1 && (
-        <Plot
-          data={[
-            {
-              type: 'pie',
-              values: activeCategories.map(([, items]) => items.length),
-              labels: activeCategories.map(([cat]) => cat),
-              marker: {
-                colors: activeCategories.map(([cat]) => CATEGORY_COLORS[cat] || '#6b7280'),
+      {activeCategories.length > 0 && (
+        <div className="w-full overflow-visible">
+          <Plot
+            data={[
+              {
+                type: 'pie',
+                values: activeCategories.map(([, items]) => items.length),
+                labels: activeCategories.map(([cat]) => cat),
+                marker: {
+                  colors: activeCategories.map(([cat]) => CATEGORY_COLORS[cat] || '#6b7280'),
+                },
+                hole: 0.4,
+                textinfo: 'label+percent',
+                textfont: { size: 11 },
+                automargin: true,
+                domain: { x: [0.18, 0.82], y: [0.02, 0.98] },
               },
-              hole: 0.4,
-              textinfo: 'label+percent',
-              textfont: { size: 10 },
-            },
-          ]}
-          layout={{
-            paper_bgcolor: 'rgba(0,0,0,0)',
-            plot_bgcolor: 'rgba(0,0,0,0)',
-            font: { color: '#4b5563' },
-            margin: { l: 0, r: 0, t: 0, b: 0 },
-            height: 180,
-            showlegend: false,
-          }}
-          config={{ displayModeBar: false }}
-          className="w-full"
-        />
+            ]}
+            layout={{
+              paper_bgcolor: 'rgba(0,0,0,0)',
+              plot_bgcolor: 'rgba(0,0,0,0)',
+              font: { color: '#4b5563' },
+              margin: { l: 80, r: 100, t: 8, b: 8 },
+              height: 250,
+              showlegend: false,
+            }}
+            config={{ displayModeBar: false, responsive: true }}
+            className="w-full"
+          />
+        </div>
       )}
       {activeCategories.map(([cat, items]) => (
         <div key={cat} className="border border-[#0F766E] rounded-[8px] p-[10px_12px]">

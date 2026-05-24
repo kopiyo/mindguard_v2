@@ -1,6 +1,27 @@
 import re
 from typing import Tuple
 
+LOW_CONTEXT_MAX_WORDS = 6
+LOW_CONTEXT_MAX_CHARS = 45
+LOW_CONTEXT_BENIGN_SCORE = 0.05
+LOW_CONTEXT_NO_CRISIS_CAP = 0.34
+
+BENIGN_SHORT_PATTERNS = [
+    r"^(hi|hello|hey|yo|sup)\W*$",
+    r"^(ok|okay|sure|yes|yeah|yep|no|nope)\W*$",
+    r"^(thanks|thank you|thx|ty)\W*$",
+    r"^(great|nice|cool|awesome|perfect|fine|good)\W*$",
+    r"^(good morning|good afternoon|good evening|good night|gn)\W*$",
+    r"^(see you|see you then|see ya|talk soon|later|bye)\W*$",
+    r"^(okay no problem|no problem|all good|sounds good)\W*$",
+]
+
+BENIGN_SHORT_RE = re.compile("|".join(f"(?:{pattern})" for pattern in BENIGN_SHORT_PATTERNS), re.IGNORECASE)
+CRISIS_TERMS_RE = re.compile(
+    r"\b(suicide|suicidal|kill myself|end my life|self harm|self-harm|hurt myself|overdose|can't go on|cant go on|die|dying)\b",
+    re.IGNORECASE,
+)
+
 STOPWORDS = {
     "a","about","above","after","again","all","am","an","and","any","are","as",
     "at","be","because","been","before","being","below","between","both","but",
@@ -14,6 +35,34 @@ STOPWORDS = {
     "too","under","until","up","very","was","we","were","what","when","where",
     "which","while","who","whom","why","will","with","you","your","yours",
 }
+
+
+def calibrate_risk_score(text: str, raw_score: float) -> dict:
+    cleaned = re.sub(r"\s+", " ", (text or "").strip())
+    words = re.findall(r"[A-Za-z0-9']+", cleaned)
+    low_context = len(words) <= LOW_CONTEXT_MAX_WORDS or len(cleaned) <= LOW_CONTEXT_MAX_CHARS
+    has_crisis_terms = bool(CRISIS_TERMS_RE.search(cleaned))
+    benign_short = low_context and bool(BENIGN_SHORT_RE.match(cleaned)) and not has_crisis_terms
+
+    adjusted_score = float(raw_score)
+    reason = ""
+    if benign_short:
+        adjusted_score = min(adjusted_score, LOW_CONTEXT_BENIGN_SCORE)
+        reason = "Short benign conversational phrase"
+    elif low_context and not has_crisis_terms:
+        adjusted_score = min(adjusted_score, LOW_CONTEXT_NO_CRISIS_CAP)
+        reason = "Low-context text without crisis language"
+    elif low_context:
+        reason = "Short text has limited context"
+
+    return {
+        "raw_risk_score": float(raw_score),
+        "risk_score": adjusted_score,
+        "low_context": low_context,
+        "adjustment_reason": reason,
+        "word_count": len(words),
+        "char_count": len(cleaned),
+    }
 
 SOCIOECONOMIC_KEYWORDS = {
     "Employment": [
@@ -67,6 +116,14 @@ RESOURCES = {
         {"name": "Kenya Red Cross", "contact": "1199", "type": "Emergency"},
         {"name": "Chiromo Hospital Group", "contact": "+254 20 4291000", "type": "Mental health"},
         {"name": "Mathare Hospital MH Unit", "contact": "+254 20 2012185", "type": "Hospital"},
+    ],
+    "USA (National)": [
+        {"name": "988 Suicide & Crisis Lifeline", "contact": "Call/text 988", "type": "Crisis line"},
+        {"name": "Crisis Text Line", "contact": "Text HOME to 741741", "type": "Text-based"},
+        {"name": "NAMI Helpline", "contact": "1-800-950-6264", "type": "Mental health"},
+        {"name": "SAMHSA Helpline", "contact": "1-800-662-4357", "type": "Substance abuse & mental health"},
+        {"name": "Veterans Crisis Line", "contact": "Call 988, press 1", "type": "Veterans"},
+        {"name": "Trevor Project (LGBTQ+ youth)", "contact": "1-866-488-7386", "type": "Youth crisis"},
     ],
     "UK": [
         {"name": "Samaritans", "contact": "116 123", "type": "Crisis line"},

@@ -22,14 +22,20 @@ class TextAnalysisResponse(BaseModel):
 class PlatformRequest(BaseModel):
     username: str = ""
     handle: str = ""
+    identifier: str = ""
     instance: str = Field(default="mastodon.social", max_length=253)
     password: str = ""
+    client_id: str = ""
+    client_secret: str = ""
     channel_url: str = ""
     video_url: str = ""
     profile_url: str = ""
     api_key: str = ""
+    months: int = Field(default=3, ge=1, le=6)
     min_risk: float = Field(default=0.0, ge=0.0, le=1.0)
     n_show: int = Field(default=20, gt=0, le=500)
+    transcribe_videos: bool = True
+    transcript_limit: int = Field(default=3, ge=0, le=3)
 
 
 class LoginRequest(BaseModel):

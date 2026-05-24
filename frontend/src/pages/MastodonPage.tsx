@@ -3,129 +3,213 @@ import { usePlatformStore } from '../store'
 import { analyzeMastodon } from '../api/analysis'
 import TimelineChart from '../components/analysis/TimelineChart'
 import PostCards from '../components/analysis/PostCards'
-import OverallBanner from '../components/analysis/OverallBanner'
 import SocioEconomicPanel from '../components/analysis/SocioEconomicPanel'
 import LoadingSpinner from '../components/shared/LoadingSpinner'
+import RiskBadge from '../components/shared/RiskBadge'
 import type { PlatformResult } from '../types'
 
 export default function MastodonPage() {
   const [handle, setHandle] = useState('')
-  const [instance, setInstance] = useState('mastodon.social')
   const [minRisk, setMinRisk] = useState(0)
+  const [nShow, setNShow] = useState(20)
   const [error, setError] = useState('')
+  const [warning, setWarning] = useState('')
+  const [status, setStatus] = useState('')
   const [activeTab, setActiveTab] = useState<'timeline' | 'posts' | 'socio'>('timeline')
   const { mastodon, loading, setPlatformResult } = usePlatformStore()
 
   const handleAnalyze = async () => {
-    if (!handle.trim()) return
+    const targetHandle = handle.trim()
+    if (!targetHandle) {
+      setWarning('Enter a Mastodon handle in the format username@instance.social.')
+      return
+    }
+
     setError('')
+    setWarning('')
+    setStatus(`Fetching posts for ${targetHandle}...`)
     try {
       usePlatformStore.getState().setLoading(true)
-      const result = await analyzeMastodon(handle, instance, minRisk, 20)
+      const result = await analyzeMastodon(targetHandle, minRisk, nShow)
+      setStatus(`Running Mental-RoBERTa on ${result.n_posts} posts...`)
       setPlatformResult('mastodon', result)
+      setActiveTab('timeline')
     } catch (err: any) {
-      setError(err.message || 'Mastodon analysis failed')
+      const message = err.response?.data?.detail || err.message || 'Mastodon analysis failed'
+      if (String(message).toLowerCase().includes('no posts found')) {
+        setWarning(message)
+      } else {
+        setError(message)
+      }
     } finally {
+      setStatus('')
       usePlatformStore.getState().setLoading(false)
     }
   }
 
   const result = mastodon as PlatformResult | null
+  const displayedPosts = result?.df.filter((p) => p.risk_score >= result.min_risk) ?? []
+  const shownPosts = result ? Math.min(displayedPosts.length, result.n_show) : 0
+  const resultHandle = result?.handle || handle.trim()
 
   return (
-    <div className="flex flex-col gap-[14px]">
-      <h2 className="text-[1.1rem] font-bold text-[#1f2937]">Mastodon Analysis</h2>
-      <p className="text-[0.74rem] text-[#6b7280] -mt-[10px]">
-        Enter a Mastodon handle and instance to analyse public posts. No API key needed.
-      </p>
+    <div className="flex flex-col gap-[18px]">
+      <div>
+        <h2 className="text-[1.15rem] font-bold text-[#111827]">Mastodon Analysis</h2>
+        <p className="text-[0.78rem] text-[#4b5563] mt-[14px] max-w-[430px]">
+          Fetches 3 months of posts for any public Mastodon account. No API key needed.
+        </p>
+      </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-[1fr_2fr] gap-[14px]">
-        <div className="bg-white rounded-xl border border-[rgba(229,231,235,0.7)] p-[16px_18px]">
-          <div className="text-[0.62rem] font-bold text-[#374151] uppercase tracking-[0.06em] mb-[4px]">Handle</div>
-          <input
-            type="text"
-            value={handle}
-            onChange={(e) => setHandle(e.target.value)}
-            placeholder="username"
-            className="w-full bg-[#fafbfc] border-[1.5px] border-[#e5e7eb] rounded-[7px] px-[10px] py-[7px] text-[0.7rem] text-[#4b5563] outline-none focus:border-[#0F766E] mb-[8px]"
-          />
-          <div className="text-[0.62rem] font-bold text-[#374151] uppercase tracking-[0.06em] mb-[4px]">Instance</div>
-          <input
-            type="text"
-            value={instance}
-            onChange={(e) => setInstance(e.target.value)}
-            placeholder="mastodon.social"
-            className="w-full bg-[#fafbfc] border-[1.5px] border-[#e5e7eb] rounded-[7px] px-[10px] py-[7px] text-[0.7rem] text-[#4b5563] outline-none focus:border-[#0F766E] mb-[8px]"
-          />
-          <div className="text-[0.62rem] font-bold text-[#374151] uppercase tracking-[0.06em] mb-[4px]">Min risk score</div>
-          <div className="flex items-center gap-[8px] mb-[8px]">
+      <div className="border-t border-[#d1d5db]" />
+
+      <div className="grid grid-cols-1 lg:grid-cols-[460px_1fr] gap-[32px] items-start">
+        <section className="flex flex-col gap-[14px]">
+          <label className="flex flex-col gap-[6px] text-[0.78rem] text-[#4b5563]">
+            Mastodon handle
+            <input
+              type="text"
+              value={handle}
+              onChange={(e) => setHandle(e.target.value)}
+              placeholder="e.g. Gargron@mastodon.social"
+              className="w-full bg-white border border-[#d1d5db] rounded-[7px] px-[12px] py-[10px] text-[0.82rem] text-[#111827] outline-none focus:border-[#0F766E]"
+            />
+          </label>
+
+          <label className="flex flex-col gap-[4px] text-[0.78rem] text-[#4b5563]">
+            Show posts above risk score
+            <span className="text-[0.7rem] text-[#4b5563]">{minRisk.toFixed(2)}</span>
             <input
               type="range"
               min={0}
-              max={100}
-              value={minRisk * 100}
-              onChange={(e) => setMinRisk(Number(e.target.value) / 100)}
-              className="flex-1 h-[3px]"
+              max={1}
+              step={0.05}
+              value={minRisk}
+              onChange={(e) => setMinRisk(Number(e.target.value))}
+              className="w-full accent-[#ef4444]"
             />
-            <span className="text-[0.68rem] text-[#6b7280] font-semibold min-w-[32px]">{(minRisk * 100).toFixed(0)}%</span>
-          </div>
+          </label>
+
+          <label className="flex flex-col gap-[4px] text-[0.78rem] text-[#4b5563]">
+            Max posts to display
+            <span className="text-[0.7rem] text-[#4b5563] text-center">{nShow}</span>
+            <input
+              type="range"
+              min={5}
+              max={50}
+              step={5}
+              value={nShow}
+              onChange={(e) => setNShow(Number(e.target.value))}
+              className="w-full accent-[#ef4444]"
+            />
+          </label>
+
+          <button
+            onClick={handleAnalyze}
+            disabled={loading}
+            className="w-full bg-[#0F766E] text-white border-none rounded-[7px] py-[12px] text-[0.86rem] font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_14px_26px_rgba(15,118,110,0.18)]"
+          >
+            Analyse Mastodon User
+          </button>
+
+          {loading && <LoadingSpinner text={status || 'Fetching posts and running Mental-RoBERTa...'} />}
+          {warning && (
+            <div className="text-[0.82rem] text-[#4b5563] bg-[#fefce8] rounded-[7px] px-[14px] py-[12px] border border-[#fef3c7]">
+              {warning}
+            </div>
+          )}
           {error && (
-            <div className="text-[0.65rem] text-[#dc2626] bg-[#fef2f2] rounded-[6px] px-[10px] py-[7px] mb-[8px] border border-[#fecaca]">
+            <div className="text-[0.78rem] text-[#dc2626] bg-[#fef2f2] rounded-[7px] px-[14px] py-[12px] border border-[#fecaca]">
               {error}
             </div>
           )}
-          <button
-            onClick={handleAnalyze}
-            disabled={!handle.trim() || loading}
-            className="w-full bg-gradient-to-r from-[#0F766E] to-[#1D9E75] text-white border-none rounded-[7px] py-[7px] text-[0.72rem] font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {loading ? 'Analysing...' : 'Analyse Mastodon User'}
-          </button>
-        </div>
+        </section>
 
-        <div className="bg-white rounded-xl border border-[rgba(229,231,235,0.7)] overflow-hidden">
-          <div className="flex bg-[#f8fafc] border-b border-[#f1f5f9] px-[14px] overflow-x-auto">
-            {(['timeline', 'posts', 'socio'] as const).map((tab) => (
-              <div
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`py-[10px] px-[14px] text-[0.7rem] cursor-pointer border-b-2 transition-colors ${
-                  activeTab === tab
-                    ? 'text-[#0F766E] border-[#0F766E] font-semibold'
-                    : 'text-[#94a3b8] border-transparent font-medium hover:text-[#6b7280]'
-                }`}
-              >
-                {tab === 'timeline' ? 'Timeline' : tab === 'posts' ? 'Posts' : 'Socio-Economic'}
+        <section className="min-h-[240px]">
+          {!loading && !result ? (
+            <div className="h-[220px] flex items-start justify-center pt-[10px] text-center text-[#c4c9d0] text-[0.9rem]">
+              Enter a handle and click Analyse Mastodon User.
+            </div>
+          ) : result ? (
+            <div className="flex flex-col gap-[18px]">
+              <div>
+                <h3 className="text-[0.92rem] font-bold text-[#111827]">
+                  {resultHandle}
+                  {resultHandle && (
+                    <a
+                      href={`https://${resultHandle.split('@')[1]}/@${resultHandle.split('@')[0]}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="ml-[8px] text-[#9ca3af] hover:text-[#0F766E]"
+                      title="Open Mastodon profile"
+                    >
+                      <i className="ti ti-link" />
+                    </a>
+                  )}
+                </h3>
               </div>
-            ))}
-          </div>
-          <div className="p-[14px_16px]">
-            {loading ? (
-              <LoadingSpinner text="Fetching and analysing Mastodon posts..." />
-            ) : !result ? (
-              <div className="flex flex-col items-center justify-center h-[200px] text-[#c4c9d0] gap-[5px]">
-                <i className="ti ti-cloud text-[22px]" />
-                <span className="text-[0.65rem]">Enter a handle and click Analyse</span>
+
+              <div className="grid grid-cols-2 xl:grid-cols-4 gap-[18px]">
+                <Metric label="Overall Risk" value={`${(result.overall * 100).toFixed(1)}%`} />
+                <Metric label="Posts Analysed" value={String(result.n_posts)} />
+                <Metric label="High-Risk Posts" value={String(result.n_high)} />
+                <Metric label="Period" value="3 months" />
               </div>
-            ) : (
-              <>
-                {activeTab === 'timeline' && (
-                  <>
-                    <OverallBanner result={result} />
-                    <div className="mt-[10px]">
-                      <TimelineChart posts={result.df} />
-                    </div>
-                  </>
+
+              <div>
+                <RiskBadge score={result.overall} />
+                {result.overall >= 0.55 && (
+                  <div className="mt-[8px] bg-[#fee2e2] text-[#4b5563] rounded-[7px] px-[14px] py-[10px] text-[0.82rem]">
+                    CRISIS ALERT - High-risk content detected. Please direct to crisis resources.
+                  </div>
                 )}
-                {activeTab === 'posts' && (
-                  <PostCards posts={result.df.filter((p) => p.risk_score >= result.min_risk)} n={result.n_show} />
-                )}
-                {activeTab === 'socio' && <SocioEconomicPanel signals={result.signals} />}
-              </>
-            )}
-          </div>
-        </div>
+              </div>
+
+              <div className="border-t border-[#d1d5db]" />
+
+              <div className="bg-white border border-[#d1d5db] rounded-[8px] overflow-hidden">
+                <div className="flex bg-white px-[8px] overflow-x-auto border-b border-[#e5e7eb]">
+                  {(['timeline', 'posts', 'socio'] as const).map((tab) => (
+                    <button
+                      key={tab}
+                      onClick={() => setActiveTab(tab)}
+                      className={`px-[14px] py-[10px] text-[0.78rem] border-b-2 ${
+                        activeTab === tab
+                          ? 'text-white bg-[#0F766E] border-[#ef4444] font-semibold rounded-t-[7px]'
+                          : 'text-[#4b5563] border-transparent hover:text-[#0F766E]'
+                      }`}
+                    >
+                      {tab === 'timeline' ? 'Timeline' : tab === 'posts' ? 'Posts' : 'Socio-Economic'}
+                    </button>
+                  ))}
+                </div>
+                <div className="p-[14px]">
+                  {activeTab === 'timeline' && <TimelineChart posts={result.df} />}
+                  {activeTab === 'posts' && (
+                    <>
+                      <p className="mb-[12px] text-[0.72rem] text-[#64748b]">
+                        Fetched {result.n_posts} public post{result.n_posts === 1 ? '' : 's'}.
+                        {' '}Showing {shownPosts} of {displayedPosts.length} post{displayedPosts.length === 1 ? '' : 's'} matching the risk filter.
+                      </p>
+                      <PostCards posts={displayedPosts} n={result.n_show} />
+                    </>
+                  )}
+                  {activeTab === 'socio' && <SocioEconomicPanel signals={result.signals} />}
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </section>
       </div>
+    </div>
+  )
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-[0.78rem] text-[#4b5563]">{label}</div>
+      <div className="text-[2rem] leading-tight text-[#4b5563]">{value}</div>
     </div>
   )
 }
