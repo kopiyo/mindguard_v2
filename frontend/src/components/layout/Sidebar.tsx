@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { useAuthStore, useUiStore, useNotificationStore } from '../../store'
+import { useAuthStore, useUiStore, useNotificationStore, usePlatformStore } from '../../store'
 import { useCounsellorStore } from '../../store/counsellorStore'
 import { useMediaQuery } from '../../hooks/useMediaQuery'
 import { getAlerts } from '../../api/counsellor'
@@ -7,6 +7,8 @@ import { NOTIFICATION_TYPE_LABELS, NOTIFICATION_TYPE_ICONS } from '../../types'
 
 const STUDENT_NAV_ITEMS: { key: string; icon: string; label: string }[] = [
   { key: 'dashboard', icon: 'ti ti-brain', label: 'Dashboard' },
+  { key: 'text-image', icon: 'ti ti-photo-scan', label: 'Text / Image' },
+  { key: 'batch', icon: 'ti ti-player-play', label: 'Batch Analysis' },
   { key: 'communications', icon: 'ti ti-mail', label: 'Messages' },
   { key: 'reddit', icon: 'ti ti-brand-reddit', label: 'Reddit' },
   { key: 'video', icon: 'ti ti-video', label: 'Video' },
@@ -53,6 +55,7 @@ function RolePill({ role }: { role?: string }) {
 export default function Sidebar() {
   const { currentPage, setPage, sidebarOpen, sidebarCollapsed, toggleSidebarCollapsed } = useUiStore()
   const { user } = useAuthStore()
+  const { reddit, bluesky, mastodon, youtube, file, facebook, twitter, video } = usePlatformStore()
   const referralCount = useCounsellorStore((s) => s.referralCount)
   const {
     notifications, unreadCount, fetchNotifications,
@@ -76,6 +79,17 @@ export default function Sidebar() {
           item.key === 'alert-queue' && openAlertCount > 0 ? { ...item, badge: openAlertCount } : item
         )
       : STUDENT_NAV_ITEMS
+
+  const analysedPlatforms: Record<string, boolean> = {
+    reddit: Boolean(reddit),
+    bluesky: Boolean(bluesky),
+    mastodon: Boolean(mastodon),
+    youtube: Boolean(youtube),
+    file: Boolean(file),
+    facebook: Boolean(facebook),
+    twitter: Boolean(twitter),
+    video: Boolean(video?.ok),
+  }
 
   const sectionLabel = isAdmin ? 'Admin' : isCounsellor ? 'Counsellor' : 'Student'
 
@@ -238,11 +252,12 @@ export default function Sidebar() {
       <div className="flex-1 overflow-y-auto py-[4px]">
         {(navItems as { key: string; icon: string; label: string; badge?: number }[]).map((item) => {
           const isActive = currentPage === item.key
+          const isAnalysed = analysedPlatforms[item.key]
           return (
             <div
               key={item.key}
               onClick={() => setPage(item.key as any)}
-              className={`flex items-center cursor-pointer transition-colors duration-150 ${
+              className={`relative flex items-center cursor-pointer transition-colors duration-150 ${
                 isCollapsed
                   ? 'justify-center mx-[6px] py-[10px] rounded-[8px]'
                   : 'gap-[10px] px-[14px] py-[9px] mx-[8px] my-[1px] rounded-[8px] text-[0.82rem]'
@@ -254,6 +269,16 @@ export default function Sidebar() {
             >
               <i className={`${item.icon} text-[18px] ${isActive ? 'text-[#34d399]' : ''}`} />
               {!isCollapsed && <span className="flex-1">{item.label}</span>}
+              {isAnalysed && (
+                <span
+                  className={`flex items-center justify-center rounded-full bg-[#0F766E] text-white ${
+                    isCollapsed ? 'absolute right-[7px] top-[7px] h-[8px] w-[8px]' : 'h-[18px] w-[18px]'
+                  }`}
+                  title={`${item.label} analysed`}
+                >
+                  {!isCollapsed && <i className="ti ti-check text-[12px]" />}
+                </span>
+              )}
               {!isCollapsed && (item.key === 'referrals' ? (
                 referralCount > 0 && (
                   <span className="bg-[#ef4444] text-white text-[0.6rem] font-bold px-[6px] py-[1px] rounded-full min-w-[18px] text-center">

@@ -7,13 +7,16 @@ import streamlit as st
 import pickle, numpy as np, time, re, os, datetime, subprocess, tempfile, json, base64
 from pathlib import Path
 import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, RobertaConfig, RobertaForSequenceClassification
 import plotly.graph_objects as go
 import plotly.express as px
 from PIL import Image
 import pytesseract
 import pandas as pd
+from dotenv import load_dotenv
 from huggingface_hub import snapshot_download, hf_hub_download
+
+load_dotenv()
 
 #APP_DIR = Path(__file__).resolve().parent
 #MINDGUARD_LOGO_PATH = APP_DIR / "assets" / "mindguard_logo_highres.png"
@@ -651,28 +654,66 @@ if not st.session_state.terms_accepted:
 @st.cache_resource
 def load_model_and_tokenizer():
     from huggingface_hub import hf_hub_download
+
+    def _build_model_from_trained_state():
+        return RobertaForSequenceClassification(
+            RobertaConfig(
+                vocab_size=50265,
+                max_position_embeddings=514,
+                num_attention_heads=12,
+                num_hidden_layers=12,
+                type_vocab_size=1,
+                hidden_size=768,
+                intermediate_size=3072,
+                num_labels=2,
+            )
+        )
+
+    def _get_secret(key: str, default: str = "") -> str:
+        value = os.environ.get(key, "")
+        if value:
+            return value
+        try:
+            return st.secrets.get(key, default)
+        except Exception:
+            return default
+
     try:
         with open("mindguard_model_config.json") as f:
             config = json.load(f)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        hf_repo_id = _get_secret("HF_REPO_ID")
+        hf_token = _get_secret("HF_TOKEN")
+
+        if not hf_repo_id:
+            raise RuntimeError(
+                "HF_REPO_ID is not configured. Add it to .env or .streamlit/secrets.toml."
+            )
+
+        token_kwargs = {"token": hf_token} if hf_token else {}
         tokenizer = AutoTokenizer.from_pretrained(
-            st.secrets["HF_REPO_ID"],
-            token=st.secrets["HF_TOKEN"],
-            subfolder="mindguard_tokenizer"
+            hf_repo_id,
+            subfolder="mindguard_tokenizer",
+            **token_kwargs,
         )
         local_path = "mindguard_model_local"
-        load_from = local_path if os.path.exists(local_path) else config["model_name"]
-        model = AutoModelForSequenceClassification.from_pretrained(
-            load_from,
-            num_labels=2,
-            ignore_mismatched_sizes=True,
-        )
+        if os.path.exists(local_path):
+            model = AutoModelForSequenceClassification.from_pretrained(
+                local_path,
+                num_labels=2,
+                ignore_mismatched_sizes=True,
+            )
+        else:
+            model = _build_model_from_trained_state()
         weights_path = hf_hub_download(
-            repo_id=st.secrets["HF_REPO_ID"],
+            repo_id=hf_repo_id,
             filename="mindguard_best_weights.pt",
-            token=st.secrets["HF_TOKEN"]
+            token=hf_token or None,
         )
-        state_dict = torch.load(weights_path, map_location=device)
+        try:
+            state_dict = torch.load(weights_path, map_location=device, weights_only=True)
+        except TypeError:
+            state_dict = torch.load(weights_path, map_location=device)
         model.load_state_dict(state_dict)
         model = model.to(device)
         model.eval()

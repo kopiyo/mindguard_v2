@@ -95,7 +95,7 @@ export default function VideoPage() {
         <div className="flex flex-col gap-[14px]">
           {loading ? (
             <div className="bg-white rounded-xl border border-[rgba(229,231,235,0.7)] p-[18px_20px] min-h-[260px] flex items-center justify-center">
-              <LoadingSpinner text="Downloading audio, transcribing, then running Mental-RoBERTa..." />
+              <LoadingSpinner text="Downloading audio, transcribing, then analysing..." />
             </div>
           ) : videoResult?.ok && hasTranscript && riskInfo ? (
             <>

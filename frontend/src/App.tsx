@@ -8,6 +8,8 @@ import TermsPage from './components/auth/TermsPage'
 import MainLayout from './components/layout/MainLayout'
 import AuthCallbackPage from './pages/AuthCallbackPage'
 import DashboardPage from './pages/DashboardPage'
+import TextImageAnalysisPage from './pages/TextImageAnalysisPage'
+import BatchAnalysisPage from './pages/BatchAnalysisPage'
 import RedditPage from './pages/RedditPage'
 import VideoPage from './pages/VideoPage'
 import BlueskyPage from './pages/BlueskyPage'
@@ -93,6 +95,8 @@ function PageRouter() {
 
   switch (currentPage) {
     case 'dashboard': return <DashboardPage />
+    case 'text-image': return <TextImageAnalysisPage />
+    case 'batch': return <BatchAnalysisPage />
     case 'reddit': return <RedditPage />
     case 'video': return <VideoPage />
     case 'bluesky': return <BlueskyPage />

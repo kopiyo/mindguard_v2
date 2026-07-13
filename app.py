@@ -1246,10 +1246,29 @@ def load_model_and_tokenizer():
     Load Mental-RoBERTa in order of availability:
       1. HuggingFace private repo  (HF_REPO_ID + HF_TOKEN  in .env or st.secrets)
       2. Local files               (mindguard_tokenizer/ + mindguard_best_weights.pt)
-      3. Base public model         (mental/mental-roberta-base — no fine-tuned weights)
+      3. Base public model         (roberta-base — no fine-tuned weights)
     """
     # Lazy import — avoids Streamlit worker sys.modules conflicts at module load time
-    from transformers import AutoModelForSequenceClassification, AutoTokenizer
+    from transformers import (
+        AutoModelForSequenceClassification,
+        AutoTokenizer,
+        RobertaConfig,
+        RobertaForSequenceClassification,
+    )
+
+    def _build_model_from_trained_state():
+        return RobertaForSequenceClassification(
+            RobertaConfig(
+                vocab_size=50265,
+                max_position_embeddings=514,
+                num_attention_heads=12,
+                num_hidden_layers=12,
+                type_vocab_size=1,
+                hidden_size=768,
+                intermediate_size=3072,
+                num_labels=2,
+            )
+        )
 
     def _get(key: str, default: str = "") -> str:
         """Read from env var first, fall back to st.secrets."""
@@ -1265,7 +1284,7 @@ def load_model_and_tokenizer():
         with open("mindguard_model_config.json") as f:
             config = json.load(f)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        base_model  = config.get("model_name", "mental/mental-roberta-base")
+        public_fallback_model = "roberta-base"
         hf_repo     = _get("HF_REPO_ID")
         hf_token    = _get("HF_TOKEN")
         token_kwargs = {"token": hf_token} if hf_token else {}
@@ -1283,14 +1302,16 @@ def load_model_and_tokenizer():
                         hf_repo, subfolder="mindguard_tokenizer", **token_kwargs,
                     )
                 except Exception:
-                    tokenizer = AutoTokenizer.from_pretrained(base_model, **token_kwargs)
+                    tokenizer = AutoTokenizer.from_pretrained(public_fallback_model)
 
-                # Architecture: local saved model or base model
+                # Architecture: local saved model or matching RoBERTa classifier.
                 local_arch = "mindguard_model_local"
-                arch_src   = local_arch if os.path.isdir(local_arch) else base_model
-                model = AutoModelForSequenceClassification.from_pretrained(
-                    arch_src, num_labels=2, ignore_mismatched_sizes=True,
-                )
+                if os.path.isdir(local_arch):
+                    model = AutoModelForSequenceClassification.from_pretrained(
+                        local_arch, num_labels=2, ignore_mismatched_sizes=True,
+                    )
+                else:
+                    model = _build_model_from_trained_state()
 
                 # Load fine-tuned weights
                 try:
@@ -1312,10 +1333,12 @@ def load_model_and_tokenizer():
         if os.path.isdir(local_tok) and os.path.isfile(local_weights):
             tokenizer = AutoTokenizer.from_pretrained(local_tok)
             local_arch = "mindguard_model_local"
-            arch_src   = local_arch if os.path.isdir(local_arch) else base_model
-            model = AutoModelForSequenceClassification.from_pretrained(
-                arch_src, num_labels=2, ignore_mismatched_sizes=True,
-            )
+            if os.path.isdir(local_arch):
+                model = AutoModelForSequenceClassification.from_pretrained(
+                    local_arch, num_labels=2, ignore_mismatched_sizes=True,
+                )
+            else:
+                model = _build_model_from_trained_state()
             state_dict = torch.load(local_weights, map_location=device, weights_only=True)
             model.load_state_dict(state_dict)
             model = model.to(device)
@@ -1323,9 +1346,9 @@ def load_model_and_tokenizer():
             return model, tokenizer, config, device
 
         # ── Path 3: Base public model (no fine-tuned weights) ─────────────
-        tokenizer = AutoTokenizer.from_pretrained(base_model, **token_kwargs)
+        tokenizer = AutoTokenizer.from_pretrained(public_fallback_model)
         model = AutoModelForSequenceClassification.from_pretrained(
-            base_model, num_labels=2, ignore_mismatched_sizes=True, **token_kwargs,
+            public_fallback_model, num_labels=2, ignore_mismatched_sizes=True,
         )
         model = model.to(device)
         model.eval()

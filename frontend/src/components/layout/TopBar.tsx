@@ -2,7 +2,9 @@ import { useUiStore, useAuthStore } from '../../store'
 import { useCallback, useEffect, useState } from 'react'
 
 const PAGE_TITLES: Record<string, string> = {
-  dashboard: 'Text / Image Analysis',
+  dashboard: 'Dashboard',
+  'text-image': 'Text / Image Analysis',
+  batch: 'Batch Analysis',
   reddit: 'Reddit Analysis',
   video: 'Video Analysis',
   bluesky: 'Bluesky Analysis',

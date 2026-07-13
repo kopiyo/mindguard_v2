@@ -136,18 +136,6 @@ export default function MultiPlatformPage() {
   const totalSignals = Object.values(combinedSignals).reduce((sum, items) => sum + items.length, 0)
   const activeSignalCategories = Object.values(combinedSignals).filter((items) => items.length > 0).length
   const barColors = platformKeys.map((key) => getRiskLabel(platforms[key].overall).color)
-  const reportContent = [
-    `MindGuard Unified Risk Report\n${'='.repeat(40)}\n`,
-    `Unified Risk Score: ${formatPercent(unifiedScore)} (${unifiedLabel.label})\n`,
-    `Platforms analysed: ${platformKeys.join(', ')}\n\n`,
-    ...platformKeys.map((key) => {
-      const platform = platforms[key]
-      return `${key}: ${formatPercent(platform.overall)} - ${getRiskLabel(platform.overall).label} (${platform.n_posts} posts, ${platform.n_high} high-risk)\n`
-    }),
-    `\nSocio-economic signals: ${totalSignals} across ${activeSignalCategories} categories\n`,
-    `Timestamp: ${new Date().toLocaleString()}\n`,
-  ].join('')
-
   const downloadCsv = () => {
     const headers = visibleColumns.map((column) => column.label)
     const lines = tableRows.map((row) =>
@@ -158,6 +146,25 @@ export default function MultiPlatformPage() {
     const link = document.createElement('a')
     link.href = url
     link.download = 'mindguard-platform-detail.csv'
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const downloadPdf = () => {
+    const pdf = createUnifiedReportPdf({
+      rows,
+      unifiedScore,
+      unifiedLabel: unifiedLabel.label,
+      unifiedColor: unifiedLabel.color,
+      platformKeys,
+      combinedSignals,
+      totalSignals,
+      activeSignalCategories,
+    })
+    const url = URL.createObjectURL(pdf)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `mindguard-unified-report-${new Date().toISOString().slice(0, 10)}.pdf`
     link.click()
     URL.revokeObjectURL(url)
   }
@@ -402,20 +409,188 @@ export default function MultiPlatformPage() {
           Combined Socio-Economic Signals
         </h3>
         <p className="text-[0.72rem] text-[#4b5563] mb-[12px]">
-          {totalSignals} socio-economic distress signal(s) detected across {activeSignalCategories} categories.
+          {totalSignals} contextual socio-economic signal(s) detected across {activeSignalCategories} categories.
+          These keyword matches are supporting context, not proof of suicidal intent.
         </p>
         <SocioEconomicPanel signals={combinedSignals} />
       </section>
 
-      <a
-        href={`data:text/plain;charset=utf-8,${encodeURIComponent(reportContent)}`}
-        download="mindguard_unified_report.txt"
+      <button
+        type="button"
+        onClick={downloadPdf}
         className="block w-full text-center bg-white border border-[#d1d5db] rounded-[8px] py-[11px] text-[0.86rem] font-semibold text-[#4b5563] hover:border-[#0F766E] hover:text-[#0F766E]"
       >
-        Download unified report
-      </a>
+        Download unified report PDF
+      </button>
     </div>
   )
+}
+
+type PdfReportInput = {
+  rows: DetailRow[]
+  unifiedScore: number
+  unifiedLabel: string
+  unifiedColor: string
+  platformKeys: string[]
+  combinedSignals: Record<string, any[]>
+  totalSignals: number
+  activeSignalCategories: number
+}
+
+function createUnifiedReportPdf({
+  rows,
+  unifiedScore,
+  unifiedLabel,
+  unifiedColor,
+  platformKeys,
+  combinedSignals,
+  totalSignals,
+  activeSignalCategories,
+}: PdfReportInput) {
+  const pdf = new SimplePdf()
+  const margin = 44
+  let y = 52
+
+  pdf.text('MindGuard Unified Risk Report', margin, y, 20, [17, 24, 39], true)
+  y += 22
+  pdf.text(`Generated: ${new Date().toLocaleString()}`, margin, y, 9, [75, 85, 99])
+  y += 30
+
+  const accent = hexToRgb(unifiedColor)
+  pdf.text('Unified Risk Score', margin, y, 10, [75, 85, 99])
+  pdf.text(formatPercent(unifiedScore), margin, y + 25, 26, accent)
+  pdf.text('Platforms Analysed', 230, y, 10, [75, 85, 99])
+  pdf.text(String(platformKeys.length), 230, y + 25, 26, [75, 85, 99])
+  pdf.text('Unified Risk Level', 390, y, 10, [75, 85, 99])
+  pdf.text(unifiedLabel, 390, y + 25, 22, [75, 85, 99])
+  y += 72
+
+  y = pdf.sectionTitle('Platform Breakdown', margin, y)
+  y = drawBarChart(pdf, rows, margin, y, 500, 190, unifiedScore)
+  y += 28
+
+  y = pdf.sectionTitle('Detail Table', margin, y)
+  y = drawDetailTable(pdf, rows, margin, y)
+  y += 24
+
+  if (y > 610) {
+    pdf.addPage()
+    y = 52
+  }
+
+  y = pdf.sectionTitle('Combined Socio-Economic Signals', margin, y)
+  pdf.text(
+    `${totalSignals} contextual socio-economic signal(s) detected across ${activeSignalCategories} categories. These are supporting context, not proof of suicidal intent.`,
+    margin,
+    y,
+    10,
+    [75, 85, 99],
+  )
+  y += 20
+  y = drawSignalDistribution(pdf, combinedSignals, margin, y, 500)
+  y += 18
+  drawSignalExamples(pdf, combinedSignals, margin, y)
+
+  return pdf.toBlob()
+}
+
+function drawBarChart(pdf: SimplePdf, rows: DetailRow[], x: number, y: number, width: number, height: number, unifiedScore: number) {
+  const chartX = x + 36
+  const chartY = y + 12
+  const chartW = width - 54
+  const chartH = height - 46
+  pdf.rect(x, y, width, height, [255, 255, 255], [209, 213, 219])
+  ;[0, 0.25, 0.5, 0.75, 1].forEach((tick) => {
+    const ty = chartY + chartH - tick * chartH
+    pdf.line(chartX, ty, chartX + chartW, ty, [229, 231, 235], 0.6)
+    pdf.text(`${Math.round(tick * 100)}%`, x + 10, ty + 3, 8, [100, 116, 139])
+  })
+  const avgY = chartY + chartH - unifiedScore * chartH
+  pdf.line(chartX, avgY, chartX + chartW, avgY, [15, 118, 110], 1)
+  pdf.text(`Unified avg: ${formatPercent(unifiedScore)}`, chartX + chartW - 86, avgY - 5, 8, [15, 118, 110])
+
+  const gap = 18
+  const barW = Math.max(24, (chartW - gap * (rows.length - 1)) / Math.max(rows.length, 1))
+  rows.forEach((row, index) => {
+    const bx = chartX + index * (barW + gap)
+    const bh = Math.max(2, row.overallRisk * chartH)
+    const by = chartY + chartH - bh
+    pdf.rect(bx, by, barW, bh, hexToRgb(row.riskColor))
+    pdf.text(formatPercent(row.overallRisk), bx + 2, by - 6, 8, [55, 65, 81])
+    pdf.text(row.platform.slice(0, 12), bx, chartY + chartH + 14, 8, [75, 85, 99])
+  })
+  return y + height
+}
+
+function drawDetailTable(pdf: SimplePdf, rows: DetailRow[], x: number, y: number) {
+  const widths = [126, 74, 100, 106, 94]
+  const headers = ['Platform', 'Posts', 'Overall Risk', 'High-Risk Posts', 'Risk Level']
+  const rowH = 22
+  pdf.rect(x, y, widths.reduce((a, b) => a + b, 0), rowH, [248, 250, 252], [209, 213, 219])
+  let cx = x
+  headers.forEach((header, index) => {
+    pdf.text(header, cx + 6, y + 14, 9, [75, 85, 99], true)
+    pdf.line(cx, y, cx, y + rowH * (rows.length + 1), [229, 231, 235], 0.5)
+    cx += widths[index]
+  })
+  pdf.line(cx, y, cx, y + rowH * (rows.length + 1), [229, 231, 235], 0.5)
+  rows.forEach((row, index) => {
+    const ry = y + rowH * (index + 1)
+    pdf.line(x, ry, x + widths.reduce((a, b) => a + b, 0), ry, [229, 231, 235], 0.5)
+    pdf.text(row.platform, x + 6, ry + 14, 9)
+    pdf.text(String(row.posts), x + widths[0] + 45, ry + 14, 9)
+    pdf.text(formatPercent(row.overallRisk), x + widths[0] + widths[1] + 50, ry + 14, 9)
+    pdf.text(String(row.highRiskPosts), x + widths[0] + widths[1] + widths[2] + 64, ry + 14, 9)
+    pdf.text(row.riskLevel, x + widths[0] + widths[1] + widths[2] + widths[3] + 6, ry + 14, 9, hexToRgb(row.riskColor), true)
+  })
+  pdf.line(x, y + rowH * (rows.length + 1), x + widths.reduce((a, b) => a + b, 0), y + rowH * (rows.length + 1), [209, 213, 219], 0.6)
+  return y + rowH * (rows.length + 1)
+}
+
+function drawSignalDistribution(pdf: SimplePdf, signals: Record<string, any[]>, x: number, y: number, width: number) {
+  const categories = Object.entries(signals).filter(([, items]) => items.length > 0)
+  if (!categories.length) {
+    pdf.text('No contextual socio-economic signals detected.', x, y + 12, 10, [75, 85, 99])
+    return y + 28
+  }
+  const total = categories.reduce((sum, [, items]) => sum + items.length, 0)
+  const max = Math.max(...categories.map(([, items]) => items.length))
+  const colors: Rgb[] = [[15, 118, 110], [124, 58, 237], [220, 38, 38], [245, 158, 11], [8, 145, 178], [37, 99, 235]]
+  categories.forEach(([category, items], index) => {
+    const yy = y + index * 24
+    const percent = Math.round((items.length / total) * 1000) / 10
+    pdf.text(category, x, yy + 11, 9, [31, 41, 55], true)
+    pdf.rect(x + 110, yy, width - 190, 12, [241, 245, 249])
+    pdf.rect(x + 110, yy, ((width - 190) * items.length) / max, 12, colors[index % colors.length])
+    pdf.text(`${items.length} signal(s), ${percent}%`, x + width - 72, yy + 10, 8, [100, 116, 139])
+  })
+  return y + categories.length * 24
+}
+
+function drawSignalExamples(pdf: SimplePdf, signals: Record<string, any[]>, x: number, y: number) {
+  Object.entries(signals).forEach(([category, items]) => {
+    if (!items.length) return
+    if (y > 720) {
+      pdf.addPage()
+      y = 52
+    }
+    pdf.text(category, x, y, 10, [31, 41, 55], true)
+    y += 14
+    items.slice(0, 4).forEach((item) => {
+      const line = `"${String(item.keyword || '').slice(0, 28)}" - ${String(item.snippet || '').replace(/\s+/g, ' ').slice(0, 120)}`
+      const wrapped = wrapText(line, 92)
+      wrapped.forEach((part) => {
+        if (y > 744) {
+          pdf.addPage()
+          y = 52
+        }
+        pdf.text(part, x + 10, y, 8, [75, 85, 99])
+        y += 11
+      })
+      y += 2
+    })
+    y += 10
+  })
 }
 
 function MenuButton({ icon, label, onClick }: { icon: string; label: string; onClick: () => void }) {
@@ -438,4 +613,149 @@ function Metric({ label, value, color = '#4b5563' }: { label: string; value: str
       <div className="text-[2rem] leading-tight" style={{ color }}>{value}</div>
     </div>
   )
+}
+
+type Rgb = [number, number, number]
+
+class SimplePdf {
+  private pages: string[] = ['']
+  private width = 595.28
+  private height = 841.89
+
+  addPage() {
+    this.pages.push('')
+  }
+
+  text(value: string, x: number, y: number, size = 10, color: Rgb = [17, 24, 39], bold = false) {
+    this.write(`${rgb(color)} BT /${bold ? 'F2' : 'F1'} ${size} Tf ${x.toFixed(2)} ${(this.height - y).toFixed(2)} Td (${pdfText(value)}) Tj ET\n`)
+  }
+
+  rect(x: number, y: number, w: number, h: number, fill: Rgb, stroke?: Rgb) {
+    this.write(`${rgb(fill)} ${x.toFixed(2)} ${(this.height - y - h).toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re f\n`)
+    if (stroke) {
+      this.write(`${rgbStroke(stroke)} 0.8 w ${x.toFixed(2)} ${(this.height - y - h).toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re S\n`)
+    }
+  }
+
+  line(x1: number, y1: number, x2: number, y2: number, color: Rgb = [209, 213, 219], width = 0.8) {
+    this.write(`${rgbStroke(color)} ${width} w ${x1.toFixed(2)} ${(this.height - y1).toFixed(2)} m ${x2.toFixed(2)} ${(this.height - y2).toFixed(2)} l S\n`)
+  }
+
+  polygon(points: [number, number][], fill: Rgb) {
+    if (points.length < 3) return
+    const [first, ...rest] = points
+    this.write(`${rgb(fill)} ${first[0].toFixed(2)} ${(this.height - first[1]).toFixed(2)} m `)
+    rest.forEach(([x, y]) => {
+      this.write(`${x.toFixed(2)} ${(this.height - y).toFixed(2)} l `)
+    })
+    this.write('h f\n')
+  }
+
+  circle(cx: number, cy: number, radius: number, fill: Rgb) {
+    const points: [number, number][] = []
+    for (let i = 0; i < 48; i += 1) {
+      const angle = (i / 48) * Math.PI * 2
+      points.push([cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius])
+    }
+    this.polygon(points, fill)
+  }
+
+  wedge(cx: number, cy: number, radius: number, startDeg: number, endDeg: number, fill: Rgb) {
+    const points: [number, number][] = [[cx, cy]]
+    const steps = Math.max(4, Math.ceil(Math.abs(endDeg - startDeg) / 8))
+    for (let i = 0; i <= steps; i += 1) {
+      const angle = (startDeg + ((endDeg - startDeg) * i) / steps) * Math.PI / 180
+      points.push([cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius])
+    }
+    this.polygon(points, fill)
+  }
+
+  sectionTitle(title: string, x: number, y: number) {
+    if (y > 735) {
+      this.addPage()
+      y = 52
+    }
+    this.text(title.toUpperCase(), x, y, 12, [75, 85, 99], true)
+    return y + 20
+  }
+
+  toBlob() {
+    const objects: string[] = []
+    const pageRefs: number[] = []
+    this.pages.forEach((content) => {
+      const stream = `<< /Length ${content.length} >>\nstream\n${content}endstream`
+      objects.push(stream)
+      const contentRef = objects.length + 4
+      objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${this.width} ${this.height}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentRef} 0 R >>`)
+      pageRefs.push(objects.length + 4)
+    })
+
+    const catalog = '<< /Type /Catalog /Pages 2 0 R >>'
+    const pages = `<< /Type /Pages /Kids [${pageRefs.map((ref) => `${ref} 0 R`).join(' ')}] /Count ${pageRefs.length} >>`
+    const font = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>'
+    const boldFont = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>'
+    const allObjects = [catalog, pages, font, boldFont, ...objects]
+    let body = '%PDF-1.4\n'
+    const offsets: number[] = []
+    allObjects.forEach((object, index) => {
+      offsets.push(body.length)
+      body += `${index + 1} 0 obj\n${object}\nendobj\n`
+    })
+    const xrefAt = body.length
+    body += `xref\n0 ${allObjects.length + 1}\n0000000000 65535 f \n`
+    offsets.forEach((offset) => {
+      body += `${String(offset).padStart(10, '0')} 00000 n \n`
+    })
+    body += `trailer\n<< /Size ${allObjects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefAt}\n%%EOF`
+    return new Blob([body], { type: 'application/pdf' })
+  }
+
+  private write(content: string) {
+    this.pages[this.pages.length - 1] += content
+  }
+}
+
+function pdfText(value: string) {
+  return value
+    .replace(/[^\x20-\x7E]/g, '-')
+    .replace(/\\/g, '\\\\')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)')
+}
+
+function rgb([r, g, b]: Rgb) {
+  return `${(r / 255).toFixed(3)} ${(g / 255).toFixed(3)} ${(b / 255).toFixed(3)} rg`
+}
+
+function rgbStroke([r, g, b]: Rgb) {
+  return `${(r / 255).toFixed(3)} ${(g / 255).toFixed(3)} ${(b / 255).toFixed(3)} RG`
+}
+
+function hexToRgb(hex: string): Rgb {
+  const clean = hex.replace('#', '')
+  const value = clean.length === 3
+    ? clean.split('').map((char) => char + char).join('')
+    : clean.padEnd(6, '0').slice(0, 6)
+  return [
+    parseInt(value.slice(0, 2), 16),
+    parseInt(value.slice(2, 4), 16),
+    parseInt(value.slice(4, 6), 16),
+  ]
+}
+
+function wrapText(text: string, maxChars: number) {
+  const words = text.split(/\s+/)
+  const lines: string[] = []
+  let line = ''
+  words.forEach((word) => {
+    const next = line ? `${line} ${word}` : word
+    if (next.length > maxChars && line) {
+      lines.push(line)
+      line = word
+    } else {
+      line = next
+    }
+  })
+  if (line) lines.push(line)
+  return lines
 }

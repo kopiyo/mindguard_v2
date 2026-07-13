@@ -676,6 +676,8 @@ async def analyze_reddit(req: PlatformRequest, user: dict = Depends(require_auth
         _platform_results[user["id"]]["reddit"] = result
         return result
 
+    except HTTPException:
+        raise
     except ImportError:
         raise HTTPException(501, "PRAW not installed. Install with: pip install praw")
     except prawcore.exceptions.NotFound:
@@ -685,8 +687,6 @@ async def analyze_reddit(req: PlatformRequest, user: dict = Depends(require_auth
     except prawcore.exceptions.ResponseException as e:
         logger.error("Reddit API error: %s", e)
         raise HTTPException(502, f"Reddit API responded with an error: {e}")
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error("Reddit analysis error: %s", e)
         raise HTTPException(400, f"Reddit analysis failed: {e}")

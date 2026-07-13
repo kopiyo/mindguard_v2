@@ -58,3 +58,5 @@ CLAUDE.md
 MINDGUARD_DEV_GUIDE.md
 *.swp
 *.swo
+*.log
+frontend/npm-cache/
