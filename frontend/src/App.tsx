@@ -7,6 +7,7 @@ import SignInPage from './components/auth/SignInPage'
 import TermsPage from './components/auth/TermsPage'
 import MainLayout from './components/layout/MainLayout'
 import AuthCallbackPage from './pages/AuthCallbackPage'
+import ConsentPortalPage from './pages/ConsentPortalPage'
 import DashboardPage from './pages/DashboardPage'
 import TextImageAnalysisPage from './pages/TextImageAnalysisPage'
 import BatchAnalysisPage from './pages/BatchAnalysisPage'
@@ -73,6 +74,22 @@ function PageRouter() {
   if (role === 'admin') {
     switch (currentPage) {
       case 'admin': return <AdminPage />
+      case 'counsellor-dashboard': return <CounsellorDashboardPage />
+      case 'students': return <StudentManagementPage />
+      case 'batch': return <BatchAnalysisPage />
+      case 'reddit': return <RedditPage />
+      case 'video': return <VideoPage />
+      case 'bluesky': return <BlueskyPage />
+      case 'mastodon': return <MastodonPage />
+      case 'youtube': return <YouTubePage />
+      case 'file': return <FileUploadPage />
+      case 'facebook': return <FacebookPage />
+      case 'twitter': return <TwitterPage />
+      case 'unified': return <MultiPlatformPage />
+      case 'referrals': return <ReferralsPage />
+      case 'communications': return <CommunicationsPage />
+      case 'alert-queue': return <AlertQueuePage />
+      case 'consent-tracker': return <ConsentTrackerPage />
       case 'audit-log': return <AuditLogPage />
       case 'notification-preferences': return <NotificationPreferencesPage />
       default: return <AdminPage />
@@ -83,6 +100,16 @@ function PageRouter() {
     switch (currentPage) {
       case 'counsellor-dashboard': return <CounsellorDashboardPage />
       case 'students': return <StudentManagementPage />
+      case 'batch': return <BatchAnalysisPage />
+      case 'reddit': return <RedditPage />
+      case 'video': return <VideoPage />
+      case 'bluesky': return <BlueskyPage />
+      case 'mastodon': return <MastodonPage />
+      case 'youtube': return <YouTubePage />
+      case 'file': return <FileUploadPage />
+      case 'facebook': return <FacebookPage />
+      case 'twitter': return <TwitterPage />
+      case 'unified': return <MultiPlatformPage />
       case 'referrals': return <ReferralsPage />
       case 'communications': return <CommunicationsPage />
       case 'alert-queue': return <AlertQueuePage />
@@ -96,16 +123,6 @@ function PageRouter() {
   switch (currentPage) {
     case 'dashboard': return <DashboardPage />
     case 'text-image': return <TextImageAnalysisPage />
-    case 'batch': return <BatchAnalysisPage />
-    case 'reddit': return <RedditPage />
-    case 'video': return <VideoPage />
-    case 'bluesky': return <BlueskyPage />
-    case 'mastodon': return <MastodonPage />
-    case 'youtube': return <YouTubePage />
-    case 'file': return <FileUploadPage />
-    case 'facebook': return <FacebookPage />
-    case 'twitter': return <TwitterPage />
-    case 'unified': return <MultiPlatformPage />
     case 'resources': return <CrisisResourcesPage />
     case 'team': return <TeamPage />
     case 'communications': return <StudentCommunicationsPage />
@@ -205,6 +222,11 @@ export default function App() {
 
   if (window.location.pathname.startsWith('/auth/callback') && !authenticated) {
     return <AuthCallbackPage />
+  }
+
+  if (window.location.pathname.startsWith('/consent/')) {
+    const token = window.location.pathname.split('/consent/')[1]?.split('/')[0] || ''
+    return <ConsentPortalPage token={token} />
   }
 
   if (!authenticated) {

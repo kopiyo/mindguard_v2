@@ -35,7 +35,7 @@ const PLATFORMS = ['Reddit', 'Bluesky', 'Mastodon', 'YouTube']
 interface NewConsentModalProps {
   students: StudentDTO[]
   onClose: () => void
-  onCreated: () => void
+  onCreated: (consent: Consent) => void
 }
 
 function NewConsentModal({ students, onClose, onCreated }: NewConsentModalProps) {
@@ -59,13 +59,13 @@ function NewConsentModal({ students, onClose, onCreated }: NewConsentModalProps)
     setSubmitting(true)
     setError(null)
     try {
-      await createConsent(studentId, {
+      const consent = await createConsent(studentId, {
         recipient_email: recipientEmail,
         recipient_role: recipientRole,
         platforms,
         mode,
       })
-      onCreated()
+      onCreated(consent)
       onClose()
     } catch (e: any) {
       setError(e.message)
@@ -223,6 +223,7 @@ export default function ConsentTrackerPage() {
   const [error, setError] = useState<string | null>(null)
   const [showModal, setShowModal] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [dispatchNotice, setDispatchNotice] = useState<Consent | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -243,7 +244,10 @@ export default function ConsentTrackerPage() {
   const handleAction = async (action: () => Promise<any>, id: string) => {
     setActionLoading(id)
     try {
-      await action()
+      const result = await action()
+      if (result?.email_sent !== undefined || result?.consent_url) {
+        setDispatchNotice(result)
+      }
       await load()
     } catch (e: any) {
       alert(e.message)
@@ -290,6 +294,26 @@ export default function ConsentTrackerPage() {
           </button>
         ))}
       </div>
+
+      {dispatchNotice && (
+        <div className={`rounded-[10px] border px-[16px] py-[12px] text-[0.84rem] ${
+          dispatchNotice.email_sent
+            ? 'bg-[#ecfdf5] border-[#bbf7d0] text-[#065f46]'
+            : 'bg-[#fff7ed] border-[#fed7aa] text-[#9a3412]'
+        }`}>
+          <div className="font-bold">
+            {dispatchNotice.email_sent ? 'Consent email sent.' : 'Consent created, but email was not sent.'}
+          </div>
+          {!dispatchNotice.email_sent && dispatchNotice.email_error && (
+            <div className="mt-[4px]">{dispatchNotice.email_error}</div>
+          )}
+          {dispatchNotice.consent_url && (
+            <div className="mt-[6px] break-all">
+              Consent link: <a className="underline font-semibold" href={dispatchNotice.consent_url} target="_blank" rel="noreferrer">{dispatchNotice.consent_url}</a>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="bg-white rounded-xl border border-[rgba(229,231,235,0.7)] overflow-hidden">
         <div className="flex items-center justify-between px-[20px] py-[14px] border-b border-[#f1f5f9]">
@@ -418,7 +442,10 @@ export default function ConsentTrackerPage() {
         <NewConsentModal
           students={students}
           onClose={() => setShowModal(false)}
-          onCreated={load}
+          onCreated={(consent) => {
+            setDispatchNotice(consent)
+            load()
+          }}
         />
       )}
     </div>

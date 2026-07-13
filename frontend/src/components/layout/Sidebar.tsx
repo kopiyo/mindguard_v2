@@ -8,17 +8,7 @@ import { NOTIFICATION_TYPE_LABELS, NOTIFICATION_TYPE_ICONS } from '../../types'
 const STUDENT_NAV_ITEMS: { key: string; icon: string; label: string }[] = [
   { key: 'dashboard', icon: 'ti ti-brain', label: 'Dashboard' },
   { key: 'text-image', icon: 'ti ti-photo-scan', label: 'Text / Image' },
-  { key: 'batch', icon: 'ti ti-player-play', label: 'Batch Analysis' },
   { key: 'communications', icon: 'ti ti-mail', label: 'Messages' },
-  { key: 'reddit', icon: 'ti ti-brand-reddit', label: 'Reddit' },
-  { key: 'video', icon: 'ti ti-video', label: 'Video' },
-  { key: 'bluesky', icon: 'ti ti-butterfly', label: 'Bluesky' },
-  { key: 'mastodon', icon: 'ti ti-cloud', label: 'Mastodon' },
-  { key: 'youtube', icon: 'ti ti-brand-youtube', label: 'YouTube' },
-  { key: 'file', icon: 'ti ti-folder-open', label: 'File Upload' },
-  { key: 'facebook', icon: 'ti ti-brand-facebook', label: 'Facebook' },
-  { key: 'twitter', icon: 'ti ti-brand-x', label: 'Twitter / X' },
-  { key: 'unified', icon: 'ti ti-share', label: 'Multi-Platform' },
   { key: 'resources', icon: 'ti ti-ambulance', label: 'Crisis Resources' },
   { key: 'team', icon: 'ti ti-users', label: 'Team' },
 ]
@@ -26,6 +16,16 @@ const STUDENT_NAV_ITEMS: { key: string; icon: string; label: string }[] = [
 const COUNSELLOR_NAV_BASE = [
   { key: 'counsellor-dashboard', icon: 'ti ti-layout-dashboard', label: 'Dashboard' },
   { key: 'students', icon: 'ti ti-users', label: 'Students' },
+  { key: 'batch', icon: 'ti ti-player-play', label: 'Batch Analysis' },
+  { key: 'unified', icon: 'ti ti-share', label: 'Multi-Platform' },
+  { key: 'reddit', icon: 'ti ti-brand-reddit', label: 'Reddit' },
+  { key: 'bluesky', icon: 'ti ti-butterfly', label: 'Bluesky' },
+  { key: 'mastodon', icon: 'ti ti-cloud', label: 'Mastodon' },
+  { key: 'youtube', icon: 'ti ti-brand-youtube', label: 'YouTube' },
+  { key: 'facebook', icon: 'ti ti-brand-facebook', label: 'Facebook' },
+  { key: 'twitter', icon: 'ti ti-brand-x', label: 'Twitter / X' },
+  { key: 'video', icon: 'ti ti-video', label: 'Video' },
+  { key: 'file', icon: 'ti ti-folder-open', label: 'File Upload' },
   { key: 'referrals', icon: 'ti ti-link', label: 'Referrals' },
   { key: 'communications', icon: 'ti ti-mail', label: 'Communications' },
   { key: 'alert-queue', icon: 'ti ti-bell-ringing', label: 'Alert Queue' },
@@ -35,7 +35,7 @@ const COUNSELLOR_NAV_BASE = [
 
 const ADMIN_NAV_ITEMS = [
   { key: 'admin', icon: 'ti ti-shield-check', label: 'Admin Panel' },
-  { key: 'audit-log', icon: 'ti ti-history', label: 'Audit Log' },
+  ...COUNSELLOR_NAV_BASE,
 ]
 
 function RolePill({ role }: { role?: string }) {
@@ -73,7 +73,9 @@ export default function Sidebar() {
   const isCollapsed = isDesktop && sidebarCollapsed
 
   const navItems = isAdmin
-    ? ADMIN_NAV_ITEMS
+    ? ADMIN_NAV_ITEMS.map((item) =>
+        item.key === 'alert-queue' && openAlertCount > 0 ? { ...item, badge: openAlertCount } : item
+      )
     : isCounsellor
       ? COUNSELLOR_NAV_BASE.map((item) =>
           item.key === 'alert-queue' && openAlertCount > 0 ? { ...item, badge: openAlertCount } : item
@@ -93,9 +95,9 @@ export default function Sidebar() {
 
   const sectionLabel = isAdmin ? 'Admin' : isCounsellor ? 'Counsellor' : 'Student'
 
-  // Fetch open alert count for counsellors
+  // Fetch open alert count for counsellors and admins
   useEffect(() => {
-    if (!isCounsellor) return
+    if (!isCounsellor && !isAdmin) return
     const fetchCount = async () => {
       try {
         const alerts = await getAlerts('OPEN')
@@ -105,7 +107,7 @@ export default function Sidebar() {
     fetchCount()
     const interval = setInterval(fetchCount, 60000)
     return () => clearInterval(interval)
-  }, [isCounsellor])
+  }, [isCounsellor, isAdmin])
 
   // Poll notifications every 30 seconds + fetch preferences
   useEffect(() => {

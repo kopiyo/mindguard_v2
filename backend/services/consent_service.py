@@ -10,6 +10,7 @@ Valid transitions:
   ACCEPTED -> RENEWAL_DUE (auto on expiry)
 """
 import json
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -18,6 +19,7 @@ from backend.database import (
     update_consent_status,
     write_audit,
 )
+from backend.services.email_sender import send_html_email
 
 CONSENT_TRANSITIONS = {
     "DRAFT":       ["PENDING"],
@@ -29,6 +31,48 @@ CONSENT_TRANSITIONS = {
     "REVOKED":     [],
     "RENEWAL_DUE": ["PENDING"],
 }
+
+
+def _consent_url(token: str) -> str:
+    base_url = os.getenv("APP_BASE_URL") or os.getenv("FRONTEND_URL") or "http://localhost:5173"
+    return f"{base_url.rstrip('/')}/consent/{token}"
+
+
+def _send_consent_email(consent: dict, reminder: bool = False) -> tuple[bool, str, str]:
+    token = consent.get("magic_token") or ""
+    url = _consent_url(token)
+    platforms = ", ".join(json.loads(consent.get("platforms_json") or "[]")) or "selected platforms"
+    role_label = "parent/guardian" if consent.get("recipient_role") == "parent" else "student"
+    subject_prefix = "Reminder: " if reminder else ""
+    subject = f"{subject_prefix}MindGuard consent request"
+    body_html = f"""
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;color:#111827;max-width:640px;margin:0 auto;padding:24px;background:#f7f9fb">
+  <div style="background:#0F766E;border-radius:10px 10px 0 0;padding:24px 28px">
+    <h1 style="color:#ffffff;margin:0;font-size:22px">MindGuard</h1>
+    <p style="color:#ccfbf1;margin:6px 0 0;font-size:14px">Consent request for social media wellbeing analysis</p>
+  </div>
+  <div style="background:#ffffff;border:1px solid #d9e3df;border-top:none;border-radius:0 0 10px 10px;padding:28px">
+    <p>Dear {role_label},</p>
+    <p>A school counsellor has requested consent to analyse public social media information using MindGuard.</p>
+    <p><strong>Requested platforms:</strong> {platforms}</p>
+    <p><strong>Consent mode:</strong> {consent.get("mode", "ON_DEMAND").replace("_", " ").title()}</p>
+    <p style="margin:24px 0">
+      <a href="{url}" style="background:#0F766E;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:700;display:inline-block">
+        Review consent request
+      </a>
+    </p>
+    <p>If the button does not work, copy and paste this link into your browser:</p>
+    <p style="word-break:break-all;color:#0F766E">{url}</p>
+    <p style="font-size:13px;color:#64748b">This link expires automatically. You can accept or decline from the consent page.</p>
+  </div>
+</body>
+</html>
+"""
+    ok, error = send_html_email(consent["recipient_email"], subject, body_html)
+    return ok, error, url
 
 
 def check_and_expire(consent: dict) -> dict:
@@ -73,7 +117,44 @@ def dispatch_consent(consent_id: str, actor_id: str, ip: str | None = None) -> d
         payload={"recipient": consent["recipient_email"]},
         ip=ip,
     )
+    email_sent, email_error, url = _send_consent_email(updated)
+    write_audit(
+        actor_id,
+        "counsellor",
+        "CONSENT_EMAIL_SENT" if email_sent else "CONSENT_EMAIL_FAILED",
+        "consent",
+        consent_id,
+        payload={"recipient": updated["recipient_email"], "error": email_error, "url": url},
+        ip=ip,
+    )
+    updated["email_sent"] = email_sent
+    updated["email_error"] = email_error
+    updated["consent_url"] = url
     return updated
+
+
+def remind_consent(consent_id: str, actor_id: str, ip: str | None = None) -> dict:
+    consent = get_consent_by_id(consent_id)
+    if not consent:
+        raise ValueError("Consent not found")
+    consent = check_and_expire(consent)
+    if consent["status"] not in ("PENDING", "VIEWED"):
+        raise ValueError(f"Cannot send reminder for consent in status {consent['status']}")
+
+    email_sent, email_error, url = _send_consent_email(consent, reminder=True)
+    write_audit(
+        actor_id,
+        "counsellor",
+        "CONSENT_REMINDER_SENT" if email_sent else "CONSENT_REMINDER_FAILED",
+        "consent",
+        consent_id,
+        payload={"recipient": consent["recipient_email"], "error": email_error, "url": url},
+        ip=ip,
+    )
+    consent["email_sent"] = email_sent
+    consent["email_error"] = email_error
+    consent["consent_url"] = url
+    return consent
 
 
 def record_view(consent_id: str, ip: str | None = None) -> dict:

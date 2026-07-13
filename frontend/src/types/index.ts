@@ -149,6 +149,9 @@ export interface Consent {
   expires_at?: string
   created_at: string
   student_name?: string  // joined from users
+  email_sent?: boolean
+  email_error?: string
+  consent_url?: string
 }
 
 export interface LinkedAccount {

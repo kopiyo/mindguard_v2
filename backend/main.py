@@ -64,7 +64,7 @@ from backend.database import (
     get_notification_preferences, set_notification_preference, should_notify,
 )
 from backend.services.consent_service import (
-    dispatch_consent, record_view, accept_consent, decline_consent, revoke_consent,
+    dispatch_consent, remind_consent, record_view, accept_consent, decline_consent, revoke_consent,
 )
 from backend.services.alert_service import compute_rolling_risk, try_create_alert
 from backend.auth import hash_password, verify_password, create_access_token, require_auth, blacklist_token
@@ -73,6 +73,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="MindGuard API", version="2.0.0")
+
+
+def _require_analysis_staff(user: dict) -> None:
+    role = str(user.get("role_type") or user.get("role") or "").lower()
+    if role not in {"admin", "counsellor", "counselor"}:
+        raise HTTPException(403, "Only counsellors can run social media analysis.")
 
 
 _cors_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if o.strip()]
@@ -529,21 +535,24 @@ def _fetch_reddit_rss_posts(username: str) -> list[dict]:
     }
     raw_posts: list[dict] = []
     seen_urls = set()
+    feed_errors: list[str] = []
 
     for source_type, feed_url in feeds:
         try:
             req = urllib.request.Request(
                 feed_url,
-                headers={"User-Agent": "MindGuard/1.0 RSS research prototype"},
+                headers={"User-Agent": "Mozilla/5.0 (MindGuard local research prototype; Reddit RSS mode)"},
             )
             with urllib.request.urlopen(req, timeout=20) as resp:
                 xml_text = resp.read().decode("utf-8", errors="ignore")
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
                 continue
-            raise HTTPException(exc.code, f"Could not fetch Reddit RSS feed (HTTP {exc.code}).")
+            feed_errors.append(f"{source_type} feed HTTP {exc.code}")
+            continue
         except Exception as exc:
-            raise HTTPException(502, f"Could not fetch Reddit RSS feed: {exc}")
+            feed_errors.append(f"{source_type} feed error: {exc}")
+            continue
 
         try:
             root = ET.fromstring(xml_text)
@@ -589,12 +598,16 @@ def _fetch_reddit_rss_posts(username: str) -> list[dict]:
                 "type": source_type,
             })
 
+    if not raw_posts and feed_errors:
+        raise HTTPException(502, "Could not fetch Reddit RSS feeds: " + "; ".join(feed_errors))
+
     raw_posts.sort(key=lambda p: p["date"])
     return raw_posts
 
 
 @app.post("/api/platforms/reddit")
 async def analyze_reddit(req: PlatformRequest, user: dict = Depends(require_auth)):
+    _require_analysis_staff(user)
     client_id = req.client_id or os.getenv("REDDIT_CLIENT_ID", "")
     client_secret = req.client_secret or os.getenv("REDDIT_CLIENT_SECRET", "")
     if not req.username.strip():
@@ -694,6 +707,7 @@ async def analyze_reddit(req: PlatformRequest, user: dict = Depends(require_auth
 
 @app.post("/api/platforms/bluesky")
 async def analyze_bluesky(req: PlatformRequest, user: dict = Depends(require_auth)):
+    _require_analysis_staff(user)
     target_handle = req.handle.strip().lstrip("@")
     login_handle = (req.identifier or req.handle).strip().lstrip("@")
     if target_handle and "." not in target_handle:
@@ -732,6 +746,7 @@ async def analyze_bluesky(req: PlatformRequest, user: dict = Depends(require_aut
 
 @app.post("/api/platforms/mastodon")
 async def analyze_mastodon(req: PlatformRequest, user: dict = Depends(require_auth)):
+    _require_analysis_staff(user)
     if not req.handle:
         raise HTTPException(400, "Handle required")
     handle_input = req.handle.strip().lstrip("@")
@@ -878,6 +893,7 @@ def _download_and_transcribe_video(video_url: str, max_seconds: int = 600) -> tu
 
 @app.post("/api/platforms/youtube")
 async def analyze_youtube(req: PlatformRequest, user: dict = Depends(require_auth)):
+    _require_analysis_staff(user)
     if not req.channel_url:
         raise HTTPException(400, "YouTube channel or video URL required")
     try:
@@ -1069,6 +1085,7 @@ async def analyze_youtube(req: PlatformRequest, user: dict = Depends(require_aut
 
 @app.post("/api/platforms/video")
 async def analyze_video(req: PlatformRequest, user: dict = Depends(require_auth)):
+    _require_analysis_staff(user)
     if not req.video_url:
         raise HTTPException(400, "Video URL required")
     try:
@@ -1104,6 +1121,7 @@ async def analyze_video(req: PlatformRequest, user: dict = Depends(require_auth)
 
 @app.post("/api/platforms/facebook")
 async def analyze_facebook(req: PlatformRequest, user: dict = Depends(require_auth)):
+    _require_analysis_staff(user)
     if not req.profile_url:
         raise HTTPException(400, "Facebook profile URL is required")
     if "facebook.com" not in req.profile_url.lower():
@@ -1137,6 +1155,7 @@ async def analyze_facebook(req: PlatformRequest, user: dict = Depends(require_au
 
 @app.post("/api/platforms/twitter")
 async def analyze_twitter(req: PlatformRequest, user: dict = Depends(require_auth)):
+    _require_analysis_staff(user)
     if not req.profile_url:
         raise HTTPException(400, "Twitter/X profile URL is required")
     lowered = req.profile_url.lower()
@@ -1176,6 +1195,7 @@ async def analyze_file(
     n_show: int = 20,
     user: dict = Depends(require_auth),
 ):
+    _require_analysis_staff(user)
     MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
     try:
         contents = await file.read()
@@ -1233,6 +1253,7 @@ async def analyze_file(
 
 @app.get("/api/platforms/unified")
 async def get_unified(user: dict = Depends(require_auth)):
+    _require_analysis_staff(user)
     user_results = _platform_results.get(user["id"], {})
     platforms = {}
     for key in ["reddit", "bluesky", "mastodon", "youtube", "file"]:
@@ -1637,13 +1658,20 @@ async def v1_remind_consent(
         raise HTTPException(403, "Access denied")
     if consent["status"] not in ("PENDING", "VIEWED"):
         raise HTTPException(400, f"Cannot send reminder for consent in status {consent['status']}")
-    write_audit(
-        user["id"], user["role_type"], "CONSENT_REMINDER_SENT",
-        "consent", consent_id,
-        payload={"recipient": consent["recipient_email"]},
-        ip=_client_ip(request),
-    )
-    return {"ok": True, "message": "Reminder recorded"}
+    try:
+        updated = remind_consent(consent_id, actor_id=user["id"], ip=_client_ip(request))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:
+        logger.error("remind_consent error: %s", exc)
+        raise HTTPException(500, "Failed to send reminder")
+    return {
+        "ok": True,
+        "message": "Reminder sent" if updated.get("email_sent") else "Reminder recorded but email was not sent",
+        "email_sent": updated.get("email_sent", False),
+        "email_error": updated.get("email_error", ""),
+        "consent_url": updated.get("consent_url", ""),
+    }
 
 
 @app.post("/api/v1/consents/{consent_id}/cancel")

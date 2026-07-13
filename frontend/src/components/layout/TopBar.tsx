@@ -16,9 +16,15 @@ const PAGE_TITLES: Record<string, string> = {
   unified: 'Multi-Platform Profile',
   resources: 'Crisis Resources',
   team: 'Team',
+  'counsellor-dashboard': 'MindGuard',
   students: 'Student Management',
   referrals: 'Referrals',
   communications: 'Communications',
+  'alert-queue': 'MindGuard',
+  'consent-tracker': 'MindGuard',
+  'audit-log': 'MindGuard',
+  admin: 'Admin Panel',
+  'notification-preferences': 'Notification Preferences',
 }
 
 export default function TopBar() {

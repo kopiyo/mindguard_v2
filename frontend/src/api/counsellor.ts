@@ -164,8 +164,9 @@ export async function cancelConsent(consentId: string): Promise<void> {
   await api.post(`/v1/consents/${consentId}/cancel`)
 }
 
-export async function remindConsent(consentId: string): Promise<void> {
-  await api.post(`/v1/consents/${consentId}/remind`)
+export async function remindConsent(consentId: string): Promise<Partial<Consent>> {
+  const { data } = await api.post(`/v1/consents/${consentId}/remind`)
+  return data
 }
 
 // ─── Account Linking ──────────────────────────────────────────────────────────
