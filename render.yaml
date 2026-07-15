@@ -29,5 +29,7 @@ services:
         value: /app
       - key: API_HOST
         value: 0.0.0.0
+      - key: PORT
+        value: "10000"
       - key: API_PORT
         value: "10000"
