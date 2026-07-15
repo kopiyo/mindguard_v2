@@ -33,10 +33,10 @@ ENV HF_CACHE_DIR=/tmp/huggingface
 
 EXPOSE 7860
 
-CMD ["gunicorn", "backend.main:app", \
-     "--worker-class", "uvicorn.workers.UvicornWorker", \
-     "--workers", "1", \
-     "--bind", "0.0.0.0:7860", \
-     "--timeout", "180", \
-     "--keep-alive", "5", \
-     "--log-level", "info"]
+CMD gunicorn backend.main:app \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --workers 1 \
+    --bind 0.0.0.0:${PORT:-7860} \
+    --timeout 180 \
+    --keep-alive 5 \
+    --log-level info
