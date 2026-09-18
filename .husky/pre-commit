@@ -21,7 +21,7 @@ cat logs/pre-commit.log
 if [ "$rc" -ne 0 ]; then echo "❌ lint-staged failed — piping to agent"; exit 1; fi
 
 run_gate "typecheck frontend" frontend/node_modules/.bin/tsc --noEmit --project frontend/tsconfig.app.json
-run_gate "typecheck marketing" marketing/node_modules/.bin/tsc --noEmit
+run_gate "typecheck marketing" marketing/node_modules/.bin/tsc --noEmit --project marketing/tsconfig.json
 run_gate "pytest quick" python3 -m pytest backend/tests -q --tb=line
 
 echo "✅ pre-commit passed"

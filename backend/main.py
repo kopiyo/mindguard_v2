@@ -212,6 +212,8 @@ def _decode_session_json(session: dict) -> dict:
             decoded = _decode_json_field(out[key])
             if isinstance(decoded, list):
                 out[key] = decoded
+            elif isinstance(decoded, str):
+                out[key] = [decoded]
     return out
 
 
